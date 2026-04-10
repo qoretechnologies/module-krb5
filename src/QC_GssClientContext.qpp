@@ -1,0 +1,87 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+    QC_GssClientContext.qpp
+
+    Qore Kerberos Module
+
+    Copyright (C) 2026 Qore Technologies, s.r.o.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+#include "krb5-module.h"
+
+//! Initiator-side GSSAPI client context
+/** This class is intentionally narrow in the first release. It supports target
+    name setup and iterative initiator token generation with hex-encoded tokens.
+
+    @since krb5 0.1
+*/
+qclass GssClientContext [arg=QoreGssClientContext* ctx; ns=Qore::Krb5; flags=final];
+
+//! Creates an initiator-side GSSAPI context for the given service principal
+/** @param service_principal a host-based service principal such as
+    \c "HTTP/qorus.example.com@EXAMPLE.COM"
+*/
+GssClientContext::constructor(string service_principal) {
+    SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), xsink));
+    if (*xsink) {
+        return;
+    }
+    self->setPrivate(CID_GSSCLIENTCONTEXT, c.release());
+}
+
+//! Returns the target principal string used for the context
+/**
+*/
+string GssClientContext::getTargetName() [flags=CONSTANT] {
+    return ctx->getTargetName();
+}
+
+//! Returns True if the context negotiation is complete
+/**
+*/
+bool GssClientContext::isComplete() [flags=CONSTANT] {
+    return ctx->isComplete();
+}
+
+//! Resets the security context state
+/**
+*/
+nothing GssClientContext::reset() {
+    ctx->reset();
+}
+
+//! Advances the initiator security context
+/** @return a hash with the following keys:
+    - \c complete: boolean completion flag
+    - \c flags: negotiated GSS flags as an integer bitmask
+    - \c lifetime: reported lifetime in seconds
+    - \c token: hex-encoded output token if one was produced
+*/
+hash<auto> GssClientContext::step() {
+    return ctx->step(nullptr, xsink);
+}
+
+//! Advances the initiator security context with a hex-encoded input token
+/**
+*/
+hash<auto> GssClientContext::step(string token_hex) {
+    return ctx->step(token_hex->c_str(), xsink);
+}

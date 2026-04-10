@@ -1,0 +1,56 @@
+#!/usr/bin/env qore
+%modern
+%requires QUnit
+%requires krb5
+
+class Krb5ModuleTest inherits QUnit::Test {
+    constructor() {
+        addTestCase("principal parsing", \testPrincipalParsing());
+        addTestCase("principal copy and equality", \testPrincipalCopy());
+        addTestCase("principal component bounds", \testPrincipalBounds());
+        addTestCase("gss target setup", \testGssTargetSetup());
+        addTestCase("gss invalid token hex", \testGssInvalidHex());
+        addTestCase("gss empty target rejected", \testGssEmptyTarget());
+    }
+
+    private testPrincipalParsing() {
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", p.toString());
+        assertEq("EXAMPLE.COM", p.getRealm());
+        assertEq(2, p.getComponentCount());
+        assertEq("HTTP", p.getComponent(0));
+        assertEq("qorus.example.com", p.getComponent(1));
+    }
+
+    private testPrincipalCopy() {
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal p2 = p.copy();
+        assertTrue(p.equals(p2));
+    }
+
+    private testPrincipalBounds() {
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-PRINCIPAL-ERROR", sub() {
+            p.getComponent(2);
+        });
+    }
+
+    private testGssTargetSetup() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+        assertFalse(ctx.isComplete());
+    }
+
+    private testGssInvalidHex() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.step("xyz");
+        });
+    }
+
+    private testGssEmptyTarget() {
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            Qore::Krb5::GssClientContext bad("");
+        });
+    }
+}

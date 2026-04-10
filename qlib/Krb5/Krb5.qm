@@ -1,0 +1,50 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+#! @file Krb5.qm Kerberos helper module
+
+/*  Krb5.qm Copyright 2026 Qore Technologies, s.r.o.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+%modern
+
+module Krb5 {
+    version = "0.1.0";
+    desc = "Kerberos 5 and GSSAPI helper module";
+    author = "Qore Technologies, s.r.o.";
+    url = "https://qore.org";
+    license = "MIT";
+}
+
+%requires krb5
+
+/** @mainpage Krb5 Helper Module
+
+    @section krb5helperintro Krb5 Helper Module Introduction
+
+    The \c Krb5 module provides small Qore-language helpers on top of the
+    binary \c krb5 module.
+*/
+
+public namespace Qore::Krb5 {
+    public string sub getHostBasedServicePrincipal(string service, string host, string realm) {
+        return sprintf("%s/%s@%s", service, host, realm);
+    }
+}
+

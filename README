@@ -1,0 +1,31 @@
+Qore krb5 module
+
+INTRODUCTION
+------------
+The Qore krb5 module provides Kerberos 5 and GSSAPI primitives for Qore.
+
+This initial implementation provides:
+- Kerberos principal parsing and introspection
+- GSSAPI initiator target-name handling
+- GSSAPI context stepping with hex-encoded tokens
+
+The module is designed as the security foundation for enterprise LDAP and
+Active Directory integrations on Linux.
+
+BUILDING
+--------
+Requires qore 2.0+ and MIT Kerberos / GSSAPI development libraries.
+
+CMake build:
+  mkdir build && cd build
+  cmake .. -DCMAKE_BUILD_TYPE=Debug
+  cmake --build .
+
+To run the local tests from the repo root:
+  test/run-tests.sh
+
+QUESTIONS
+---------
+Please direct any questions to:
+david@qore.org
+

@@ -1,0 +1,25 @@
+/** @page krb5examples Examples
+
+    @section krb5examples_principal Principal Parsing
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+printf("%s\n", p.toString());
+printf("%s\n", p.getRealm());
+    @endcode
+
+    @section krb5examples_gss GSSAPI Initiator Context
+
+    @code{.qore}
+%modern
+%requires krb5
+
+GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+hash<auto> step = ctx.step();
+printf("complete: %y token: %y\n", step.complete, step.token);
+    @endcode
+*/
+

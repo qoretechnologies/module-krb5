@@ -1,0 +1,7 @@
+0.1.0
+-----
+- initial module scaffold
+- added `Krb5Principal` for Kerberos principal parsing and introspection
+- added `GssClientContext` for initiator-side GSSAPI target setup and token stepping
+- added initial documentation, examples, and tests
+
