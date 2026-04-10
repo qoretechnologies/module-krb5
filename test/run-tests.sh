@@ -3,13 +3,19 @@ set -euxo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${BUILD_DIR:-$repo_dir/build}"
+env_file=/tmp/env.sh
+
+if [[ -f "${env_file}" ]]; then
+    # shellcheck disable=SC1090
+    . "${env_file}"
+fi
 
 qore_bin="$(command -v qore || true)"
 if [[ -z "${qore_bin}" ]]; then
     echo "error: qore executable not found in PATH" >&2
     exit 1
 fi
-qore_prefix="$(dirname "$(dirname "$qore_bin")")"
+qore_prefix="${INSTALL_PREFIX:-$(dirname "$(dirname "$qore_bin")")}"
 
 uname -a
 "$qore_bin" --version
