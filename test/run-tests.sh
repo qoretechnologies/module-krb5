@@ -7,7 +7,9 @@ env_file=/tmp/env.sh
 
 if [[ -f "${env_file}" ]]; then
     # shellcheck disable=SC1090
+    set +u
     . "${env_file}"
+    set -u
 fi
 
 qore_bin="$(command -v qore || true)"
