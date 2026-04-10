@@ -60,6 +60,13 @@ string Krb5Context::getDefaultCredentialCacheName() [flags=CONSTANT] {
     return ctx->getDefaultCredentialCacheName(xsink);
 }
 
+//! Returns the configured default keytab name
+/**
+*/
+string Krb5Context::getDefaultKeytabName() [flags=CONSTANT] {
+    return ctx->getDefaultKeytabName(xsink);
+}
+
 //! Opens the default credential cache
 /**
 */
@@ -86,6 +93,35 @@ Krb5CredentialCache Krb5Context::openCredentialCache(string cache_name) {
 
     ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALCACHE, getProgram()), xsink);
     rv->setPrivate(CID_KRB5CREDENTIALCACHE, cache.release());
+    return rv.release();
+}
+
+//! Opens the default keytab
+/**
+*/
+Krb5Keytab Krb5Context::openDefaultKeytab() {
+    SimpleRefHolder<QoreKrb5Keytab> keytab(ctx->openDefaultKeytab(xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5KEYTAB, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5KEYTAB, keytab.release());
+    return rv.release();
+}
+
+//! Opens a keytab by name
+/** @param keytab_name a keytab spec such as \c "FILE:/etc/krb5.keytab" or
+    \c "MEMORY:module-krb5"
+*/
+Krb5Keytab Krb5Context::openKeytab(string keytab_name) {
+    SimpleRefHolder<QoreKrb5Keytab> keytab(ctx->openKeytab(keytab_name->c_str(), xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5KEYTAB, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5KEYTAB, keytab.release());
     return rv.release();
 }
 

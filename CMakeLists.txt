@@ -29,6 +29,7 @@ configure_file(${CMAKE_SOURCE_DIR}/cmake/config.h.cmake
 set(QPP_SRC
     src/QC_Krb5Context.qpp
     src/QC_Krb5CredentialCache.qpp
+    src/QC_Krb5Keytab.qpp
     src/QC_Krb5Principal.qpp
     src/QC_GssClientContext.qpp
 )

@@ -7,11 +7,17 @@ class Krb5ModuleTest inherits QUnit::Test {
     constructor() {
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
+        addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
         addTestCase("memory credential cache roundtrip", \testMemoryCredentialCacheRoundtrip());
         addTestCase("empty credential cache reports no principal", \testEmptyCredentialCache());
         addTestCase("empty cache name rejected", \testEmptyCacheNameRejected());
         addTestCase("file cache sandbox deny", \testFileCacheSandboxDeny());
         addTestCase("file cache sandbox allow", \testFileCacheSandboxAllow());
+        addTestCase("memory keytab roundtrip", \testMemoryKeytabRoundtrip());
+        addTestCase("memory keytab highest kvno", \testMemoryKeytabHighestKvno());
+        addTestCase("invalid keytab hex rejected", \testInvalidKeytabHexRejected());
+        addTestCase("file keytab sandbox deny", \testFileKeytabSandboxDeny());
+        addTestCase("file keytab sandbox allow", \testFileKeytabSandboxAllow());
         addTestCase("principal parsing", \testPrincipalParsing());
         addTestCase("principal copy and equality", \testPrincipalCopy());
         addTestCase("principal component bounds", \testPrincipalBounds());
@@ -24,11 +30,30 @@ class Krb5ModuleTest inherits QUnit::Test {
         return sprintf("/tmp/module-krb5-%s.ccache", suffix);
     }
 
+    private string getSandboxKeytabPath(string suffix) {
+        return sprintf("/tmp/module-krb5-%s.keytab", suffix);
+    }
+
     private cleanupSandboxCache(string path) {
         try {
             unlink(path);
         } catch (hash<ExceptionInfo> ex) {
         }
+    }
+
+    private cleanupSandboxKeytab(string path) {
+        try {
+            unlink(path);
+        } catch (hash<ExceptionInfo> ex) {
+        }
+    }
+
+    private string getTestKeyHex1() {
+        return "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    }
+
+    private string getTestKeyHex2() {
+        return "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
     }
 
     private testContextDefaults() {
@@ -43,6 +68,14 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertFalse(cc.getType() == "");
         assertFalse(cc.getName() == "");
         assertFalse(cc.getFullName() == "");
+    }
+
+    private testDefaultKeytabMetadata() {
+        Qore::Krb5::Krb5Context ctx();
+        assertFalse(ctx.getDefaultKeytabName() == "");
+        auto kt = ctx.openDefaultKeytab();
+        assertFalse(kt.getType() == "");
+        assertFalse(kt.getName() == "");
     }
 
     private testMemoryCredentialCacheRoundtrip() {
@@ -133,6 +166,108 @@ class Krb5ModuleTest inherits QUnit::Test {
         string principal = p.callFunction("test_allowed_cache");
         assertEq("service/qorus.example.com@EXAMPLE.COM", principal);
         cleanupSandboxCache(cachePath);
+    }
+
+    private testMemoryKeytabRoundtrip() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-keytab-roundtrip");
+        assertFalse(kt.hasContent());
+
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 3);
+        assertTrue(kt.hasContent());
+
+        hash<Qore::Krb5::Krb5KeytabEntryInfo> entry = kt.getEntry(p);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", entry.principal);
+        assertEq(3, entry.kvno);
+        assertEq(Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, entry.enctype);
+        assertEq(32, entry.key_size);
+        assertFalse(entry.enctype_name == "");
+
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> entries = kt.listEntries();
+        assertEq(1, entries.size());
+        assertEq(3, entries[0].kvno);
+    }
+
+    private testMemoryKeytabHighestKvno() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-keytab-highest-kvno");
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 5);
+
+        hash<Qore::Krb5::Krb5KeytabEntryInfo> entry = kt.getEntry(p);
+        assertEq(5, entry.kvno);
+        assertEq(32, entry.key_size);
+    }
+
+    private testInvalidKeytabHexRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-keytab-invalid-hex");
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-KEYTAB-ERROR", sub() {
+            kt.addEntry(p, "xyz", Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        });
+    }
+
+    private testFileKeytabSandboxDeny() {
+        string keytabPath = getSandboxKeytabPath("sandbox-deny");
+        cleanupSandboxKeytab(keytabPath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            string sub test_denied_keytab() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                auto kt = ctx.openKeytab(\"FILE:%s\");
+                kt.addEntry(principal,
+                    \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",
+                    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+                return kt.getEntry(principal).principal;
+            }
+        ", keytabPath), "sandbox_denied_keytab");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        bool caught = False;
+        try {
+            p.callFunction("test_denied_keytab");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err);
+        }
+        assertTrue(caught);
+        cleanupSandboxKeytab(keytabPath);
+    }
+
+    private testFileKeytabSandboxAllow() {
+        string keytabPath = getSandboxKeytabPath("sandbox-allow");
+        cleanupSandboxKeytab(keytabPath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            string sub test_allowed_keytab() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                auto kt = ctx.openKeytab(\"FILE:%s\");
+                kt.addEntry(principal,
+                    \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",
+                    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 2);
+                return kt.getEntry(principal).principal;
+            }
+        ", keytabPath), "sandbox_allowed_keytab");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/tmp");
+        p.setSandboxManager(sm);
+
+        string principal = p.callFunction("test_allowed_keytab");
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", principal);
+        cleanupSandboxKeytab(keytabPath);
     }
 
     private testPrincipalParsing() {

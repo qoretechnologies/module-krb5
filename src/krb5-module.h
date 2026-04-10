@@ -45,22 +45,33 @@ DLLLOCAL int gss_raise_exception(ExceptionSink* xsink, const char* err, OM_uint3
 
 DLLLOCAL QoreClass* initKrb5ContextClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5CredentialCacheClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initKrb5KeytabClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5PrincipalClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initGssClientContextClass(QoreNamespace& ns);
+
+DLLLOCAL TypedHashDecl* init_hashdecl_Krb5KeytabEntryInfo(QoreNamespace& ns);
 
 extern QoreClass* QC_KRB5CONTEXT;
 extern qore_classid_t CID_KRB5CONTEXT;
 extern QoreClass* QC_KRB5CREDENTIALCACHE;
 extern qore_classid_t CID_KRB5CREDENTIALCACHE;
+extern QoreClass* QC_KRB5KEYTAB;
+extern qore_classid_t CID_KRB5KEYTAB;
 extern QoreClass* QC_KRB5PRINCIPAL;
 extern qore_classid_t CID_KRB5PRINCIPAL;
 extern QoreClass* QC_GSSCLIENTCONTEXT;
 extern qore_classid_t CID_GSSCLIENTCONTEXT;
 
+DLLLOCAL extern TypedHashDecl* hashdeclKrb5KeytabEntryInfo;
+
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);
+DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
+    const char* err, const char* context);
 DLLLOCAL QoreStringNode* encode_hex(const unsigned char* ptr, size_t len);
 DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc);
+DLLLOCAL QoreStringNode* krb5_unparse_principal(krb5_context ctx, krb5_const_principal principal, ExceptionSink* xsink,
+    const char* err, const char* context);
 
 class QoreKrb5Principal : public AbstractPrivateData {
 public:
@@ -122,10 +133,31 @@ public:
 
     DLLLOCAL QoreStringNode* getDefaultRealm(ExceptionSink* xsink) const;
     DLLLOCAL QoreStringNode* getDefaultCredentialCacheName(ExceptionSink* xsink) const;
+    DLLLOCAL QoreStringNode* getDefaultKeytabName(ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5CredentialCache* openCredentialCache(const char* cache_name, ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5CredentialCache* openDefaultCredentialCache(ExceptionSink* xsink) const;
+    DLLLOCAL class QoreKrb5Keytab* openKeytab(const char* keytab_name, ExceptionSink* xsink) const;
+    DLLLOCAL class QoreKrb5Keytab* openDefaultKeytab(ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5CredentialCache* createMemoryCredentialCache(const QoreKrb5Principal& principal,
         const char* cache_name, ExceptionSink* xsink) const;
+};
+
+class QoreKrb5Keytab : public AbstractPrivateData {
+public:
+    krb5_context ctx = nullptr;
+    krb5_keytab keytab = nullptr;
+
+    DLLLOCAL QoreKrb5Keytab(const char* keytab_name, bool use_default, ExceptionSink* xsink);
+    DLLLOCAL ~QoreKrb5Keytab() override;
+
+    DLLLOCAL QoreStringNode* getName(ExceptionSink* xsink) const;
+    DLLLOCAL QoreStringNode* getType() const;
+    DLLLOCAL bool hasContent(ExceptionSink* xsink) const;
+    DLLLOCAL int addEntry(const QoreKrb5Principal& principal, const char* key_hex, krb5_enctype enctype,
+        krb5_kvno kvno, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* getEntry(const QoreKrb5Principal& principal, krb5_kvno kvno, krb5_enctype enctype,
+        ExceptionSink* xsink) const;
+    DLLLOCAL QoreListNode* listEntries(ExceptionSink* xsink) const;
 };
 
 #endif

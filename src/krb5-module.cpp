@@ -29,13 +29,17 @@
 #include "QC_GssClientContext.h"
 #include "QC_Krb5Context.h"
 #include "QC_Krb5CredentialCache.h"
+#include "QC_Krb5Keytab.h"
 #include "QC_Krb5Principal.h"
 
 #include <qore/QoreSandboxManager.h>
 
 #include <cctype>
+#include <ctime>
 
 static QoreNamespace krb5ns("Qore::Krb5");
+
+TypedHashDecl* hashdeclKrb5KeytabEntryInfo = nullptr;
 
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
 static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
@@ -121,10 +125,10 @@ static int from_hex(unsigned char ch) {
 }
 
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
-        const char* context) {
+        const char* err, const char* context) {
     size_t len = strlen(str);
     if (len % 2) {
-        xsink->raiseException("KRB5-TOKEN-ERROR", "%s: token hex string must have even length", context);
+        xsink->raiseException(err, "%s: hex string must have even length", context);
         return false;
     }
 
@@ -133,12 +137,17 @@ DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, Excep
         int hi = from_hex(str[i]);
         int lo = from_hex(str[i + 1]);
         if (hi < 0 || lo < 0) {
-            xsink->raiseException("KRB5-TOKEN-ERROR", "%s: invalid hex character at position %d", context, (int)i);
+            xsink->raiseException(err, "%s: invalid hex character at position %d", context, (int)i);
             return false;
         }
         out.push_back((hi << 4) | lo);
     }
     return true;
+}
+
+DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
+        const char* context) {
+    return decode_hex(str, out, xsink, "KRB5-TOKEN-ERROR", context);
 }
 
 DLLLOCAL QoreStringNode* encode_hex(const unsigned char* ptr, size_t len) {
@@ -189,6 +198,66 @@ static bool krb5_check_cache_access(krb5_context ctx, krb5_ccache cache, int mod
     xsink->raiseException("KRB5-SANDBOX-ERROR",
         "%s: credential cache backend '%s' is not supported in sandboxed mode", context, type);
     return false;
+}
+
+static bool krb5_keytab_backend_uses_filesystem(const char* type) {
+    return !strcmp(type, "FILE") || !strcmp(type, "WRFILE") || !strcmp(type, "DIR");
+}
+
+static bool krb5_keytab_backend_is_non_filesystem(const char* type) {
+    return !strcmp(type, "MEMORY");
+}
+
+static const char* krb5_keytab_filesystem_path(const char* full_name) {
+    const char* delim = strchr(full_name, ':');
+    return delim ? delim + 1 : full_name;
+}
+
+static bool krb5_check_keytab_access(krb5_context ctx, krb5_keytab keytab, int mode, ExceptionSink* xsink,
+        const char* context) {
+    QoreSandboxManagerHelper smh;
+    if (!smh) {
+        return true;
+    }
+
+    const char* type = krb5_kt_get_type(ctx, keytab);
+    if (!type || !*type) {
+        xsink->raiseException("KRB5-KEYTAB-ERROR", "%s: keytab metadata is unavailable", context);
+        return false;
+    }
+
+    char name[MAX_KEYTAB_NAME_LEN] = {0};
+    krb5_error_code rc = krb5_kt_get_name(ctx, keytab, name, sizeof(name));
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "getting keytab name for sandbox check");
+        return false;
+    }
+
+    if (krb5_keytab_backend_uses_filesystem(type)) {
+        return smh->checkFilesystemAccess(krb5_keytab_filesystem_path(name), mode, xsink);
+    }
+
+    if (krb5_keytab_backend_is_non_filesystem(type)) {
+        return true;
+    }
+
+    xsink->raiseException("KRB5-SANDBOX-ERROR",
+        "%s: keytab backend '%s' is not supported in sandboxed mode", context, type);
+    return false;
+}
+
+DLLLOCAL QoreStringNode* krb5_unparse_principal(krb5_context ctx, krb5_const_principal principal, ExceptionSink* xsink,
+        const char* err, const char* context) {
+    char* name = nullptr;
+    krb5_error_code rc = krb5_unparse_name(ctx, principal, &name);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, err, context);
+        return nullptr;
+    }
+
+    QoreStringNode* rv = new QoreStringNode(name);
+    krb5_free_unparsed_name(ctx, name);
+    return rv;
 }
 
 QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) {
@@ -245,15 +314,8 @@ QoreKrb5Principal::~QoreKrb5Principal() {
 }
 
 QoreStringNode* QoreKrb5Principal::toString(ExceptionSink* xsink) const {
-    char* name = nullptr;
-    krb5_error_code rc = krb5_unparse_name(ctx, principal, &name);
-    if (rc) {
-        krb5_raise_exception(xsink, ctx, rc, "KRB5-PRINCIPAL-ERROR", "unparsing kerberos principal");
-        return nullptr;
-    }
-    QoreStringNode* str = new QoreStringNode(name);
-    krb5_free_unparsed_name(ctx, name);
-    return str;
+    return krb5_unparse_principal(ctx, principal, xsink, "KRB5-PRINCIPAL-ERROR",
+        "unparsing kerberos principal");
 }
 
 QoreStringNode* QoreKrb5Principal::getRealm(ExceptionSink* xsink) const {
@@ -510,12 +572,31 @@ QoreStringNode* QoreKrb5Context::getDefaultCredentialCacheName(ExceptionSink* xs
     return new QoreStringNode(name);
 }
 
+QoreStringNode* QoreKrb5Context::getDefaultKeytabName(ExceptionSink* xsink) const {
+    char name[MAX_KEYTAB_NAME_LEN] = {0};
+    krb5_error_code rc = krb5_kt_default_name(ctx, name, sizeof(name));
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "getting default keytab name");
+        return nullptr;
+    }
+
+    return new QoreStringNode(name);
+}
+
 QoreKrb5CredentialCache* QoreKrb5Context::openCredentialCache(const char* cache_name, ExceptionSink* xsink) const {
     return new QoreKrb5CredentialCache(cache_name, false, xsink);
 }
 
 QoreKrb5CredentialCache* QoreKrb5Context::openDefaultCredentialCache(ExceptionSink* xsink) const {
     return new QoreKrb5CredentialCache(nullptr, true, xsink);
+}
+
+QoreKrb5Keytab* QoreKrb5Context::openKeytab(const char* keytab_name, ExceptionSink* xsink) const {
+    return new QoreKrb5Keytab(keytab_name, false, xsink);
+}
+
+QoreKrb5Keytab* QoreKrb5Context::openDefaultKeytab(ExceptionSink* xsink) const {
+    return new QoreKrb5Keytab(nullptr, true, xsink);
 }
 
 QoreKrb5CredentialCache* QoreKrb5Context::createMemoryCredentialCache(const QoreKrb5Principal& principal,
@@ -537,14 +618,230 @@ QoreKrb5CredentialCache* QoreKrb5Context::createMemoryCredentialCache(const Qore
     return cache.release();
 }
 
+QoreKrb5Keytab::QoreKrb5Keytab(const char* keytab_name, bool use_default, ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_init_context(&ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, nullptr, rc, "KRB5-INIT-ERROR", "initializing kerberos context");
+        return;
+    }
+
+    if (use_default) {
+        rc = krb5_kt_default(ctx, &keytab);
+        if (rc) {
+            krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "opening default keytab");
+        }
+        return;
+    }
+
+    if (!keytab_name || !*keytab_name) {
+        xsink->raiseException("KRB5-KEYTAB-ERROR", "keytab name cannot be empty");
+        return;
+    }
+
+    rc = krb5_kt_resolve(ctx, keytab_name, &keytab);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "resolving keytab");
+    }
+}
+
+QoreKrb5Keytab::~QoreKrb5Keytab() {
+    if (keytab) {
+        krb5_kt_close(ctx, keytab);
+    }
+    if (ctx) {
+        krb5_free_context(ctx);
+    }
+}
+
+QoreStringNode* QoreKrb5Keytab::getName(ExceptionSink* xsink) const {
+    char name[MAX_KEYTAB_NAME_LEN] = {0};
+    krb5_error_code rc = krb5_kt_get_name(ctx, keytab, name, sizeof(name));
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "getting keytab name");
+        return nullptr;
+    }
+
+    return new QoreStringNode(name);
+}
+
+QoreStringNode* QoreKrb5Keytab::getType() const {
+    return new QoreStringNode(krb5_kt_get_type(ctx, keytab));
+}
+
+static QoreHashNode* krb5_keytab_entry_to_hash(krb5_context ctx, const krb5_keytab_entry& entry, ExceptionSink* xsink) {
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclKrb5KeytabEntryInfo, xsink), xsink);
+
+    ReferenceHolder<QoreStringNode> principal(
+        krb5_unparse_principal(ctx, entry.principal, xsink, "KRB5-KEYTAB-ERROR", "rendering keytab principal"), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    char enctype_name[128] = {0};
+    if (krb5_enctype_to_name(entry.key.enctype, false, enctype_name, sizeof(enctype_name))) {
+        snprintf(enctype_name, sizeof(enctype_name), "etype-%d", (int)entry.key.enctype);
+    }
+
+    rv->setKeyValue("principal", principal.release(), xsink);
+    rv->setKeyValue("kvno", (int64)entry.vno, xsink);
+    rv->setKeyValue("enctype", (int64)entry.key.enctype, xsink);
+    rv->setKeyValue("enctype_name", new QoreStringNode(enctype_name), xsink);
+    rv->setKeyValue("timestamp", (int64)entry.timestamp, xsink);
+    rv->setKeyValue("key_size", (int64)entry.key.length, xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    return rv.release();
+}
+
+bool QoreKrb5Keytab::hasContent(ExceptionSink* xsink) const {
+    if (!krb5_check_keytab_access(ctx, keytab, QSEC_READ, xsink, "checking keytab content")) {
+        return false;
+    }
+
+    krb5_error_code rc = krb5_kt_have_content(ctx, keytab);
+    if (!rc) {
+        return true;
+    }
+    if (rc == KRB5_KT_NOTFOUND) {
+        return false;
+    }
+
+    krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "checking keytab content");
+    return false;
+}
+
+int QoreKrb5Keytab::addEntry(const QoreKrb5Principal& principal, const char* key_hex, krb5_enctype enctype,
+        krb5_kvno kvno, ExceptionSink* xsink) {
+    if (!krb5_check_keytab_access(ctx, keytab, QSEC_WRITE | QSEC_CREATE, xsink, "adding keytab entry")) {
+        return -1;
+    }
+
+    std::vector<unsigned char> key_data;
+    if (!decode_hex(key_hex, key_data, xsink, "KRB5-KEYTAB-ERROR", "adding keytab entry")) {
+        return -1;
+    }
+    if (key_data.empty()) {
+        xsink->raiseException("KRB5-KEYTAB-ERROR", "adding keytab entry: key data cannot be empty");
+        return -1;
+    }
+
+    krb5_keytab_entry entry;
+    memset(&entry, 0, sizeof(entry));
+
+    krb5_error_code rc = krb5_copy_principal(ctx, principal.principal, &entry.principal);
+    if (rc) {
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "copying keytab principal");
+    }
+
+    krb5_keyblock* keyblock = nullptr;
+    rc = krb5_init_keyblock(ctx, enctype, key_data.size(), &keyblock);
+    if (rc) {
+        krb5_free_principal(ctx, entry.principal);
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "allocating keytab keyblock");
+    }
+
+    memcpy(keyblock->contents, key_data.data(), key_data.size());
+    entry.key = *keyblock;
+    keyblock->contents = nullptr;
+    keyblock->length = 0;
+    krb5_free_keyblock(ctx, keyblock);
+
+    entry.vno = kvno;
+    entry.timestamp = time(nullptr);
+
+    rc = krb5_kt_add_entry(ctx, keytab, &entry);
+    krb5_free_keytab_entry_contents(ctx, &entry);
+    if (rc) {
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "adding keytab entry");
+    }
+
+    return 0;
+}
+
+QoreHashNode* QoreKrb5Keytab::getEntry(const QoreKrb5Principal& principal, krb5_kvno kvno, krb5_enctype enctype,
+        ExceptionSink* xsink) const {
+    if (!krb5_check_keytab_access(ctx, keytab, QSEC_READ, xsink, "reading keytab entry")) {
+        return nullptr;
+    }
+
+    krb5_keytab_entry entry;
+    memset(&entry, 0, sizeof(entry));
+
+    krb5_error_code rc = krb5_kt_get_entry(ctx, keytab, principal.principal, kvno, enctype, &entry);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "reading keytab entry");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(krb5_keytab_entry_to_hash(ctx, entry, xsink), xsink);
+    krb5_free_keytab_entry_contents(ctx, &entry);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    return rv.release();
+}
+
+QoreListNode* QoreKrb5Keytab::listEntries(ExceptionSink* xsink) const {
+    if (!krb5_check_keytab_access(ctx, keytab, QSEC_READ, xsink, "listing keytab entries")) {
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreListNode> rv(new QoreListNode(hashdeclKrb5KeytabEntryInfo->getTypeInfo()), xsink);
+    krb5_kt_cursor cursor;
+    memset(&cursor, 0, sizeof(cursor));
+
+    krb5_error_code rc = krb5_kt_start_seq_get(ctx, keytab, &cursor);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "starting keytab enumeration");
+        return nullptr;
+    }
+
+    while (true) {
+        krb5_keytab_entry entry;
+        memset(&entry, 0, sizeof(entry));
+        rc = krb5_kt_next_entry(ctx, keytab, &entry, &cursor);
+        if (rc == KRB5_KT_END) {
+            break;
+        }
+        if (rc) {
+            krb5_kt_end_seq_get(ctx, keytab, &cursor);
+            krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "enumerating keytab entries");
+            return nullptr;
+        }
+
+        ReferenceHolder<QoreHashNode> info(krb5_keytab_entry_to_hash(ctx, entry, xsink), xsink);
+        krb5_free_keytab_entry_contents(ctx, &entry);
+        if (*xsink) {
+            krb5_kt_end_seq_get(ctx, keytab, &cursor);
+            return nullptr;
+        }
+
+        rv->push(info.release(), xsink);
+        if (*xsink) {
+            krb5_kt_end_seq_get(ctx, keytab, &cursor);
+            return nullptr;
+        }
+    }
+
+    krb5_kt_end_seq_get(ctx, keytab, &cursor);
+    return rv.release();
+}
+
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("GSS_MUTUAL_FLAG", (int64)GSS_C_MUTUAL_FLAG);
     krb5ns.addConstant("GSS_SEQUENCE_FLAG", (int64)GSS_C_SEQUENCE_FLAG);
     krb5ns.addConstant("GSS_INTEG_FLAG", (int64)GSS_C_INTEG_FLAG);
     krb5ns.addConstant("GSS_CONF_FLAG", (int64)GSS_C_CONF_FLAG);
+    krb5ns.addConstant("ENCTYPE_AES256_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+
+    hashdeclKrb5KeytabEntryInfo = init_hashdecl_Krb5KeytabEntryInfo(krb5ns);
 
     krb5ns.addSystemClass(initKrb5PrincipalClass(krb5ns));
     krb5ns.addSystemClass(initKrb5CredentialCacheClass(krb5ns));
+    krb5ns.addSystemClass(initKrb5KeytabClass(krb5ns));
     krb5ns.addSystemClass(initKrb5ContextClass(krb5ns));
     krb5ns.addSystemClass(initGssClientContextClass(krb5ns));
 }

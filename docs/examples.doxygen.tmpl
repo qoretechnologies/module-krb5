@@ -22,6 +22,24 @@ hash<auto> step = ctx.step();
 printf("complete: %y token: %y\n", step.complete, step.token);
     @endcode
 
+    @section krb5examples_keytab Memory Keytab Setup
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal principal("HTTP/qorus.example.com@EXAMPLE.COM");
+auto kt = ctx.openKeytab("MEMORY:module-krb5-example");
+kt.addEntry(principal,
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+
+for (hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in kt.listEntries()) {
+    printf("%s kvno=%d enctype=%s\n", entry.principal, entry.kvno, entry.enctype_name);
+}
+    @endcode
+
     @section krb5examples_sandbox Sandbox-Protected File Credential Cache
 
     @code{.qore}
@@ -45,5 +63,32 @@ sm.setFilesystemSandboxRoot("/tmp");
 p.setSandboxManager(sm);
 
 printf("%s\n", p.callFunction("init_cache"));
+    @endcode
+
+    @section krb5examples_keytab_sandbox Sandbox-Protected File Keytab
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Program p(PO_MODERN);
+p.loadModule("krb5");
+p.parse("
+    string sub init_keytab() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal principal(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+        auto kt = ctx.openKeytab(\"FILE:/tmp/module-krb5-example.keytab\");
+        kt.addEntry(principal,
+            \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        return kt.getEntry(principal).principal;
+    }
+", "krb5_keytab_sandbox_example");
+
+SandboxManager sm();
+sm.setFilesystemSandboxRoot("/tmp");
+p.setSandboxManager(sm);
+
+printf("%s\n", p.callFunction("init_keytab"));
     @endcode
 */
