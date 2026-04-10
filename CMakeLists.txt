@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5...3.31)
+cmake_minimum_required(VERSION 3.5...4.2)
 
 project(qore-krb5-module VERSION 0.1.0)
 
@@ -78,4 +78,3 @@ if (DOXYGEN_FOUND)
     add_custom_target(QORE_MOD_DOX_FILES DEPENDS ${QORE_DOX_SRC})
     add_dependencies(docs-module QORE_MOD_DOX_FILES)
 endif()
-
