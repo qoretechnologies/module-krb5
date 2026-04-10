@@ -8,6 +8,8 @@
     enterprise authentication integrations.
 
     This initial release focuses on:
+    - Kerberos default realm and credential-cache discovery
+    - in-memory credential-cache initialization for tests and service setup
     - Kerberos principal parsing and validation
     - GSSAPI target-name handling
     - initiator-side GSSAPI token stepping
@@ -20,7 +22,8 @@
 
     @section krb5classes Main Classes
 
+    - @ref Qore::Krb5::Krb5Context
+    - @ref Qore::Krb5::Krb5CredentialCache
     - @ref Qore::Krb5::Krb5Principal
     - @ref Qore::Krb5::GssClientContext
 */
-

@@ -43,9 +43,24 @@ DLLLOCAL int krb5_raise_exception(ExceptionSink* xsink, krb5_context ctx, krb5_e
 DLLLOCAL int gss_raise_exception(ExceptionSink* xsink, const char* err, OM_uint32 major, OM_uint32 minor,
     const char* context);
 
+DLLLOCAL QoreClass* initKrb5ContextClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initKrb5CredentialCacheClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initKrb5PrincipalClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initGssClientContextClass(QoreNamespace& ns);
+
+extern QoreClass* QC_KRB5CONTEXT;
+extern qore_classid_t CID_KRB5CONTEXT;
+extern QoreClass* QC_KRB5CREDENTIALCACHE;
+extern qore_classid_t CID_KRB5CREDENTIALCACHE;
+extern QoreClass* QC_KRB5PRINCIPAL;
+extern qore_classid_t CID_KRB5PRINCIPAL;
+extern QoreClass* QC_GSSCLIENTCONTEXT;
+extern qore_classid_t CID_GSSCLIENTCONTEXT;
+
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);
 DLLLOCAL QoreStringNode* encode_hex(const unsigned char* ptr, size_t len);
+DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc);
 
 class QoreKrb5Principal : public AbstractPrivateData {
 public:
@@ -53,6 +68,7 @@ public:
     krb5_principal principal = nullptr;
 
     DLLLOCAL explicit QoreKrb5Principal(const char* p, ExceptionSink* xsink);
+    DLLLOCAL QoreKrb5Principal(krb5_context source_ctx, krb5_principal source_principal, ExceptionSink* xsink);
     DLLLOCAL QoreKrb5Principal(const QoreKrb5Principal& other, ExceptionSink* xsink);
     DLLLOCAL ~QoreKrb5Principal() override;
 
@@ -81,5 +97,35 @@ public:
     DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);
 };
 
-#endif
+class QoreKrb5CredentialCache : public AbstractPrivateData {
+public:
+    krb5_context ctx = nullptr;
+    krb5_ccache cache = nullptr;
 
+    DLLLOCAL QoreKrb5CredentialCache(const char* cache_name, bool use_default, ExceptionSink* xsink);
+    DLLLOCAL ~QoreKrb5CredentialCache() override;
+
+    DLLLOCAL QoreStringNode* getName() const;
+    DLLLOCAL QoreStringNode* getType() const;
+    DLLLOCAL QoreStringNode* getFullName(ExceptionSink* xsink) const;
+    DLLLOCAL int initialize(const QoreKrb5Principal& principal, ExceptionSink* xsink);
+    DLLLOCAL bool hasPrimaryPrincipal(ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Principal* getPrimaryPrincipal(ExceptionSink* xsink) const;
+};
+
+class QoreKrb5Context : public AbstractPrivateData {
+public:
+    krb5_context ctx = nullptr;
+
+    DLLLOCAL explicit QoreKrb5Context(ExceptionSink* xsink);
+    DLLLOCAL ~QoreKrb5Context() override;
+
+    DLLLOCAL QoreStringNode* getDefaultRealm(ExceptionSink* xsink) const;
+    DLLLOCAL QoreStringNode* getDefaultCredentialCacheName(ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5CredentialCache* openCredentialCache(const char* cache_name, ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5CredentialCache* openDefaultCredentialCache(ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5CredentialCache* createMemoryCredentialCache(const QoreKrb5Principal& principal,
+        const char* cache_name, ExceptionSink* xsink) const;
+};
+
+#endif

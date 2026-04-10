@@ -1,0 +1,107 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+    QC_Krb5Context.qpp
+
+    Qore Kerberos Module
+
+    Copyright (C) 2026 Qore Technologies, s.r.o.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+#include "krb5-module.h"
+
+//! Kerberos runtime context helper
+/** This class exposes default realm and credential-cache helpers that are
+    useful for service configuration, diagnostics, and test setup.
+
+    @since krb5 0.1
+*/
+qclass Krb5Context [arg=QoreKrb5Context* ctx; ns=Qore::Krb5; dom=FILESYSTEM; flags=final];
+
+//! Creates a Kerberos runtime context
+/**
+*/
+Krb5Context::constructor() {
+    SimpleRefHolder<QoreKrb5Context> c(new QoreKrb5Context(xsink));
+    if (*xsink) {
+        return;
+    }
+    self->setPrivate(CID_KRB5CONTEXT, c.release());
+}
+
+//! Returns the default Kerberos realm from the local configuration
+/**
+*/
+string Krb5Context::getDefaultRealm() [flags=CONSTANT] {
+    return ctx->getDefaultRealm(xsink);
+}
+
+//! Returns the configured default credential-cache name
+/**
+*/
+string Krb5Context::getDefaultCredentialCacheName() [flags=CONSTANT] {
+    return ctx->getDefaultCredentialCacheName(xsink);
+}
+
+//! Opens the default credential cache
+/**
+*/
+Krb5CredentialCache Krb5Context::openDefaultCredentialCache() {
+    SimpleRefHolder<QoreKrb5CredentialCache> cache(ctx->openDefaultCredentialCache(xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALCACHE, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5CREDENTIALCACHE, cache.release());
+    return rv.release();
+}
+
+//! Opens a credential cache by name
+/** @param cache_name a cache spec such as \c "FILE:/tmp/krb5cc_test" or
+    \c "MEMORY:module-krb5"
+*/
+Krb5CredentialCache Krb5Context::openCredentialCache(string cache_name) {
+    SimpleRefHolder<QoreKrb5CredentialCache> cache(ctx->openCredentialCache(cache_name->c_str(), xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALCACHE, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5CREDENTIALCACHE, cache.release());
+    return rv.release();
+}
+
+//! Creates and initializes an in-memory credential cache with the given principal
+/** @param principal the primary principal to associate with the cache
+    @param cache_name the in-memory cache identifier without the \c MEMORY:
+    prefix
+*/
+Krb5CredentialCache Krb5Context::createMemoryCredentialCache(Krb5Principal[QoreKrb5Principal] principal,
+        string cache_name) {
+    SimpleRefHolder<QoreKrb5CredentialCache> cache(ctx->createMemoryCredentialCache(**principal, cache_name->c_str(), xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALCACHE, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5CREDENTIALCACHE, cache.release());
+    return rv.release();
+}

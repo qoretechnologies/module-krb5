@@ -5,6 +5,8 @@ INTRODUCTION
 The Qore krb5 module provides Kerberos 5 and GSSAPI primitives for Qore.
 
 This initial implementation provides:
+- Kerberos default realm and credential-cache helpers
+- in-memory credential-cache initialization for tests and service setup
 - Kerberos principal parsing and introspection
 - GSSAPI initiator target-name handling
 - GSSAPI context stepping with hex-encoded tokens
@@ -28,4 +30,3 @@ QUESTIONS
 ---------
 Please direct any questions to:
 david@qore.org
-

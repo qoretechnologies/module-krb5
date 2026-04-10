@@ -5,12 +5,65 @@
 
 class Krb5ModuleTest inherits QUnit::Test {
     constructor() {
+        addTestCase("context defaults", \testContextDefaults());
+        addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
+        addTestCase("memory credential cache roundtrip", \testMemoryCredentialCacheRoundtrip());
+        addTestCase("empty credential cache reports no principal", \testEmptyCredentialCache());
+        addTestCase("empty cache name rejected", \testEmptyCacheNameRejected());
         addTestCase("principal parsing", \testPrincipalParsing());
         addTestCase("principal copy and equality", \testPrincipalCopy());
         addTestCase("principal component bounds", \testPrincipalBounds());
         addTestCase("gss target setup", \testGssTargetSetup());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
+    }
+
+    private testContextDefaults() {
+        Qore::Krb5::Krb5Context ctx();
+        assertFalse(ctx.getDefaultRealm() == "");
+        assertFalse(ctx.getDefaultCredentialCacheName() == "");
+    }
+
+    private testDefaultCredentialCacheMetadata() {
+        Qore::Krb5::Krb5Context ctx();
+        auto cc = ctx.openDefaultCredentialCache();
+        assertFalse(cc.getType() == "");
+        assertFalse(cc.getName() == "");
+        assertFalse(cc.getFullName() == "");
+    }
+
+    private testMemoryCredentialCacheRoundtrip() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("service/qorus.example.com@EXAMPLE.COM");
+        auto cc = ctx.createMemoryCredentialCache(p, "module-krb5-roundtrip");
+        assertEq("MEMORY", cc.getType());
+        assertEq("module-krb5-roundtrip", cc.getName());
+        assertEq("MEMORY:module-krb5-roundtrip", cc.getFullName());
+        assertTrue(cc.hasPrimaryPrincipal());
+
+        auto cp = cc.getPrimaryPrincipal();
+        assertEq("service/qorus.example.com@EXAMPLE.COM", cp.toString());
+        assertTrue(p.equals(cp));
+    }
+
+    private testEmptyCredentialCache() {
+        Qore::Krb5::Krb5Context ctx();
+        auto cc = ctx.openCredentialCache("MEMORY:module-krb5-empty");
+        assertFalse(cc.hasPrimaryPrincipal());
+        assertThrows("KRB5-CACHE-ERROR", sub() {
+            cc.getPrimaryPrincipal();
+        });
+    }
+
+    private testEmptyCacheNameRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        assertThrows("KRB5-CACHE-ERROR", sub() {
+            ctx.openCredentialCache("");
+        });
+        Qore::Krb5::Krb5Principal p("service/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-CACHE-ERROR", sub() {
+            ctx.createMemoryCredentialCache(p, "");
+        });
     }
 
     private testPrincipalParsing() {

@@ -27,6 +27,8 @@
 
 #include "krb5-module.h"
 #include "QC_GssClientContext.h"
+#include "QC_Krb5Context.h"
+#include "QC_Krb5CredentialCache.h"
 #include "QC_Krb5Principal.h"
 
 #include <cctype>
@@ -147,6 +149,10 @@ DLLLOCAL QoreStringNode* encode_hex(const unsigned char* ptr, size_t len) {
     return str;
 }
 
+DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc) {
+    return rc == KRB5_FCC_NOFILE || rc == KRB5_CC_NOTFOUND || rc == KRB5_CC_END;
+}
+
 QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) {
     if (!p || !*p) {
         xsink->raiseException("KRB5-PRINCIPAL-ERROR", "principal string cannot be empty");
@@ -163,6 +169,19 @@ QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) {
     if (rc) {
         krb5_raise_exception(xsink, ctx, rc, "KRB5-PRINCIPAL-ERROR", "parsing kerberos principal");
         return;
+    }
+}
+
+QoreKrb5Principal::QoreKrb5Principal(krb5_context source_ctx, krb5_principal source_principal, ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_init_context(&ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, nullptr, rc, "KRB5-INIT-ERROR", "initializing kerberos context");
+        return;
+    }
+
+    rc = krb5_copy_principal(source_ctx, source_principal, &principal);
+    if (rc) {
+        krb5_raise_exception(xsink, source_ctx, rc, "KRB5-PRINCIPAL-ERROR", "copying kerberos principal");
     }
 }
 
@@ -311,6 +330,163 @@ QoreHashNode* QoreGssClientContext::step(const char* token_hex, ExceptionSink* x
     return rv.release();
 }
 
+QoreKrb5CredentialCache::QoreKrb5CredentialCache(const char* cache_name, bool use_default, ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_init_context(&ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, nullptr, rc, "KRB5-INIT-ERROR", "initializing kerberos context");
+        return;
+    }
+
+    if (use_default) {
+        rc = krb5_cc_default(ctx, &cache);
+        if (rc) {
+            krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "opening default credential cache");
+        }
+        return;
+    }
+
+    if (!cache_name || !*cache_name) {
+        xsink->raiseException("KRB5-CACHE-ERROR", "credential cache name cannot be empty");
+        return;
+    }
+
+    rc = krb5_cc_resolve(ctx, cache_name, &cache);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "resolving credential cache");
+    }
+}
+
+QoreKrb5CredentialCache::~QoreKrb5CredentialCache() {
+    if (cache) {
+        krb5_cc_close(ctx, cache);
+    }
+    if (ctx) {
+        krb5_free_context(ctx);
+    }
+}
+
+QoreStringNode* QoreKrb5CredentialCache::getName() const {
+    return new QoreStringNode(krb5_cc_get_name(ctx, cache));
+}
+
+QoreStringNode* QoreKrb5CredentialCache::getType() const {
+    return new QoreStringNode(krb5_cc_get_type(ctx, cache));
+}
+
+QoreStringNode* QoreKrb5CredentialCache::getFullName(ExceptionSink* xsink) const {
+    char* full_name = nullptr;
+    krb5_error_code rc = krb5_cc_get_full_name(ctx, cache, &full_name);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "getting credential cache full name");
+        return nullptr;
+    }
+
+    QoreStringNode* rv = new QoreStringNode(full_name);
+    krb5_free_string(ctx, full_name);
+    return rv;
+}
+
+int QoreKrb5CredentialCache::initialize(const QoreKrb5Principal& principal, ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_cc_initialize(ctx, cache, principal.principal);
+    if (rc) {
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "initializing credential cache");
+    }
+    return 0;
+}
+
+bool QoreKrb5CredentialCache::hasPrimaryPrincipal(ExceptionSink* xsink) const {
+    krb5_principal principal = nullptr;
+    krb5_error_code rc = krb5_cc_get_principal(ctx, cache, &principal);
+    if (!rc) {
+        krb5_free_principal(ctx, principal);
+        return true;
+    }
+    if (krb5_is_empty_cache_error(rc)) {
+        return false;
+    }
+    krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "reading credential cache primary principal");
+    return false;
+}
+
+QoreKrb5Principal* QoreKrb5CredentialCache::getPrimaryPrincipal(ExceptionSink* xsink) const {
+    krb5_principal principal = nullptr;
+    krb5_error_code rc = krb5_cc_get_principal(ctx, cache, &principal);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "reading credential cache primary principal");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Principal> rv(new QoreKrb5Principal(ctx, principal, xsink));
+    krb5_free_principal(ctx, principal);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreKrb5Context::QoreKrb5Context(ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_init_context(&ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, nullptr, rc, "KRB5-INIT-ERROR", "initializing kerberos context");
+    }
+}
+
+QoreKrb5Context::~QoreKrb5Context() {
+    if (ctx) {
+        krb5_free_context(ctx);
+    }
+}
+
+QoreStringNode* QoreKrb5Context::getDefaultRealm(ExceptionSink* xsink) const {
+    char* realm = nullptr;
+    krb5_error_code rc = krb5_get_default_realm(ctx, &realm);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-REALM-ERROR", "getting default kerberos realm");
+        return nullptr;
+    }
+
+    QoreStringNode* rv = new QoreStringNode(realm);
+    krb5_free_default_realm(ctx, realm);
+    return rv;
+}
+
+QoreStringNode* QoreKrb5Context::getDefaultCredentialCacheName(ExceptionSink* xsink) const {
+    const char* name = krb5_cc_default_name(ctx);
+    if (!name || !*name) {
+        xsink->raiseException("KRB5-CACHE-ERROR", "the default credential cache name is not available");
+        return nullptr;
+    }
+
+    return new QoreStringNode(name);
+}
+
+QoreKrb5CredentialCache* QoreKrb5Context::openCredentialCache(const char* cache_name, ExceptionSink* xsink) const {
+    return new QoreKrb5CredentialCache(cache_name, false, xsink);
+}
+
+QoreKrb5CredentialCache* QoreKrb5Context::openDefaultCredentialCache(ExceptionSink* xsink) const {
+    return new QoreKrb5CredentialCache(nullptr, true, xsink);
+}
+
+QoreKrb5CredentialCache* QoreKrb5Context::createMemoryCredentialCache(const QoreKrb5Principal& principal,
+        const char* cache_name, ExceptionSink* xsink) const {
+    if (!cache_name || !*cache_name) {
+        xsink->raiseException("KRB5-CACHE-ERROR", "memory credential cache name cannot be empty");
+        return nullptr;
+    }
+
+    std::string full_name = "MEMORY:";
+    full_name += cache_name;
+    SimpleRefHolder<QoreKrb5CredentialCache> cache(new QoreKrb5CredentialCache(full_name.c_str(), false, xsink));
+    if (*xsink) {
+        return nullptr;
+    }
+    if (cache->initialize(principal, xsink)) {
+        return nullptr;
+    }
+    return cache.release();
+}
+
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("GSS_MUTUAL_FLAG", (int64)GSS_C_MUTUAL_FLAG);
     krb5ns.addConstant("GSS_SEQUENCE_FLAG", (int64)GSS_C_SEQUENCE_FLAG);
@@ -318,6 +494,8 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("GSS_CONF_FLAG", (int64)GSS_C_CONF_FLAG);
 
     krb5ns.addSystemClass(initKrb5PrincipalClass(krb5ns));
+    krb5ns.addSystemClass(initKrb5CredentialCacheClass(krb5ns));
+    krb5ns.addSystemClass(initKrb5ContextClass(krb5ns));
     krb5ns.addSystemClass(initGssClientContextClass(krb5ns));
 }
 
@@ -328,4 +506,3 @@ static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, Exceptio
 static void krb5_module_delete() {
     krb5ns.clear(nullptr);
 }
-
