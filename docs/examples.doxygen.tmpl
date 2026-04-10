@@ -21,5 +21,29 @@ GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
 hash<auto> step = ctx.step();
 printf("complete: %y token: %y\n", step.complete, step.token);
     @endcode
-*/
 
+    @section krb5examples_sandbox Sandbox-Protected File Credential Cache
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Program p(PO_MODERN);
+p.loadModule("krb5");
+p.parse("
+    string sub init_cache() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal principal(\"service/qorus.example.com@EXAMPLE.COM\");
+        auto cc = ctx.openCredentialCache(\"FILE:/tmp/module-krb5-example.ccache\");
+        cc.initialize(principal);
+        return cc.getPrimaryPrincipal().toString();
+    }
+", "krb5_sandbox_example");
+
+SandboxManager sm();
+sm.setFilesystemSandboxRoot("/tmp");
+p.setSandboxManager(sm);
+
+printf("%s\n", p.callFunction("init_cache"));
+    @endcode
+*/

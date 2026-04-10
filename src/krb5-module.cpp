@@ -31,6 +31,8 @@
 #include "QC_Krb5CredentialCache.h"
 #include "QC_Krb5Principal.h"
 
+#include <qore/QoreSandboxManager.h>
+
 #include <cctype>
 
 static QoreNamespace krb5ns("Qore::Krb5");
@@ -151,6 +153,42 @@ DLLLOCAL QoreStringNode* encode_hex(const unsigned char* ptr, size_t len) {
 
 DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc) {
     return rc == KRB5_FCC_NOFILE || rc == KRB5_CC_NOTFOUND || rc == KRB5_CC_END;
+}
+
+static bool krb5_cache_backend_uses_filesystem(const char* type) {
+    return !strcmp(type, "FILE") || !strcmp(type, "DIR");
+}
+
+static bool krb5_cache_backend_is_non_filesystem(const char* type) {
+    return !strcmp(type, "MEMORY") || !strcmp(type, "API") || !strcmp(type, "KCM")
+        || !strcmp(type, "KEYRING") || !strcmp(type, "MSLSA");
+}
+
+static bool krb5_check_cache_access(krb5_context ctx, krb5_ccache cache, int mode, ExceptionSink* xsink,
+        const char* context) {
+    QoreSandboxManagerHelper smh;
+    if (!smh) {
+        return true;
+    }
+
+    const char* type = krb5_cc_get_type(ctx, cache);
+    const char* name = krb5_cc_get_name(ctx, cache);
+    if (!type || !*type || !name || !*name) {
+        xsink->raiseException("KRB5-CACHE-ERROR", "%s: credential cache metadata is unavailable", context);
+        return false;
+    }
+
+    if (krb5_cache_backend_uses_filesystem(type)) {
+        return smh->checkFilesystemAccess(name, mode, xsink);
+    }
+
+    if (krb5_cache_backend_is_non_filesystem(type)) {
+        return true;
+    }
+
+    xsink->raiseException("KRB5-SANDBOX-ERROR",
+        "%s: credential cache backend '%s' is not supported in sandboxed mode", context, type);
+    return false;
 }
 
 QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) {
@@ -387,6 +425,10 @@ QoreStringNode* QoreKrb5CredentialCache::getFullName(ExceptionSink* xsink) const
 }
 
 int QoreKrb5CredentialCache::initialize(const QoreKrb5Principal& principal, ExceptionSink* xsink) {
+    if (!krb5_check_cache_access(ctx, cache, QSEC_WRITE | QSEC_CREATE, xsink, "initializing credential cache")) {
+        return -1;
+    }
+
     krb5_error_code rc = krb5_cc_initialize(ctx, cache, principal.principal);
     if (rc) {
         return krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "initializing credential cache");
@@ -395,6 +437,10 @@ int QoreKrb5CredentialCache::initialize(const QoreKrb5Principal& principal, Exce
 }
 
 bool QoreKrb5CredentialCache::hasPrimaryPrincipal(ExceptionSink* xsink) const {
+    if (!krb5_check_cache_access(ctx, cache, QSEC_READ, xsink, "reading credential cache primary principal")) {
+        return false;
+    }
+
     krb5_principal principal = nullptr;
     krb5_error_code rc = krb5_cc_get_principal(ctx, cache, &principal);
     if (!rc) {
@@ -409,6 +455,10 @@ bool QoreKrb5CredentialCache::hasPrimaryPrincipal(ExceptionSink* xsink) const {
 }
 
 QoreKrb5Principal* QoreKrb5CredentialCache::getPrimaryPrincipal(ExceptionSink* xsink) const {
+    if (!krb5_check_cache_access(ctx, cache, QSEC_READ, xsink, "reading credential cache primary principal")) {
+        return nullptr;
+    }
+
     krb5_principal principal = nullptr;
     krb5_error_code rc = krb5_cc_get_principal(ctx, cache, &principal);
     if (rc) {

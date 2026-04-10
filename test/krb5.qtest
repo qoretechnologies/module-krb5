@@ -10,12 +10,25 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("memory credential cache roundtrip", \testMemoryCredentialCacheRoundtrip());
         addTestCase("empty credential cache reports no principal", \testEmptyCredentialCache());
         addTestCase("empty cache name rejected", \testEmptyCacheNameRejected());
+        addTestCase("file cache sandbox deny", \testFileCacheSandboxDeny());
+        addTestCase("file cache sandbox allow", \testFileCacheSandboxAllow());
         addTestCase("principal parsing", \testPrincipalParsing());
         addTestCase("principal copy and equality", \testPrincipalCopy());
         addTestCase("principal component bounds", \testPrincipalBounds());
         addTestCase("gss target setup", \testGssTargetSetup());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
+    }
+
+    private string getSandboxCachePath(string suffix) {
+        return sprintf("/tmp/module-krb5-%s.ccache", suffix);
+    }
+
+    private cleanupSandboxCache(string path) {
+        try {
+            unlink(path);
+        } catch (hash<ExceptionInfo> ex) {
+        }
     }
 
     private testContextDefaults() {
@@ -64,6 +77,62 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-CACHE-ERROR", sub() {
             ctx.createMemoryCredentialCache(p, "");
         });
+    }
+
+    private testFileCacheSandboxDeny() {
+        string cachePath = getSandboxCachePath("sandbox-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            string sub test_denied_cache() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"service/qorus.example.com@EXAMPLE.COM\");
+                auto cc = ctx.openCredentialCache(\"FILE:%s\");
+                cc.initialize(principal);
+                return cc.getPrimaryPrincipal().toString();
+            }
+        ", cachePath), "sandbox_denied_cache");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        bool caught = False;
+        try {
+            p.callFunction("test_denied_cache");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err);
+        }
+        assertTrue(caught);
+        cleanupSandboxCache(cachePath);
+    }
+
+    private testFileCacheSandboxAllow() {
+        string cachePath = getSandboxCachePath("sandbox-allow");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            string sub test_allowed_cache() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"service/qorus.example.com@EXAMPLE.COM\");
+                auto cc = ctx.openCredentialCache(\"FILE:%s\");
+                cc.initialize(principal);
+                return cc.getPrimaryPrincipal().toString();
+            }
+        ", cachePath), "sandbox_allowed_cache");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/tmp");
+        p.setSandboxManager(sm);
+
+        string principal = p.callFunction("test_allowed_cache");
+        assertEq("service/qorus.example.com@EXAMPLE.COM", principal);
+        cleanupSandboxCache(cachePath);
     }
 
     private testPrincipalParsing() {
