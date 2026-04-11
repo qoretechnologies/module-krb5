@@ -54,6 +54,9 @@ TypedHashDecl* hashdeclGssClientContextOptions = nullptr;
 TypedHashDecl* hashdeclGssStepInfo = nullptr;
 TypedHashDecl* hashdeclGssWrapInfo = nullptr;
 TypedHashDecl* hashdeclGssUnwrapInfo = nullptr;
+TypedHashDecl* hashdeclGssMicInfo = nullptr;
+TypedHashDecl* hashdeclGssMicVerifyInfo = nullptr;
+TypedHashDecl* hashdeclKrb5CredentialCacheInfo = nullptr;
 
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
 static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
@@ -318,6 +321,36 @@ public:
 
     Krb5CredsContentsHolder(const Krb5CredsContentsHolder&) = delete;
     Krb5CredsContentsHolder& operator=(const Krb5CredsContentsHolder&) = delete;
+};
+
+class Krb5CccolCursorHolder {
+public:
+    krb5_context ctx = nullptr;
+    krb5_cccol_cursor cursor = nullptr;
+    bool active = false;
+
+    DLLLOCAL explicit Krb5CccolCursorHolder(krb5_context ctx) : ctx(ctx) {
+    }
+
+    DLLLOCAL ~Krb5CccolCursorHolder() {
+        close();
+    }
+
+    DLLLOCAL krb5_error_code start() {
+        krb5_error_code rc = krb5_cccol_cursor_new(ctx, &cursor);
+        active = !rc;
+        return rc;
+    }
+
+    DLLLOCAL void close() {
+        if (active) {
+            krb5_cccol_cursor_free(ctx, &cursor);
+            active = false;
+        }
+    }
+
+    Krb5CccolCursorHolder(const Krb5CccolCursorHolder&) = delete;
+    Krb5CccolCursorHolder& operator=(const Krb5CccolCursorHolder&) = delete;
 };
 
 DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc) {
@@ -897,6 +930,95 @@ QoreHashNode* QoreGssClientContext::unwrap(const char* token_hex, ExceptionSink*
     return rv.release();
 }
 
+QoreHashNode* QoreGssClientContext::getMic(const char* message_hex, int qop, ExceptionSink* xsink) {
+    std::vector<unsigned char> message_bytes;
+    if (!decode_hex(message_hex, message_bytes, xsink, "decoding GSSAPI getMic message")) {
+        return nullptr;
+    }
+    if (qop < 0) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "qop value cannot be negative");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi getMic")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input = GSS_C_EMPTY_BUFFER;
+    input.value = message_bytes.empty() ? nullptr : message_bytes.data();
+    input.length = message_bytes.size();
+
+    GssBufferHolder output;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_get_mic(&min_stat, ctx, static_cast<gss_qop_t>(qop), &input, &output.buf);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "computing GSSAPI MIC");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssMicInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    rv->setKeyValue("token",
+        encode_hex(static_cast<const unsigned char*>(output.buf.value), output.buf.length), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreHashNode* QoreGssClientContext::verifyMic(const char* message_hex, const char* mic_hex, ExceptionSink* xsink) {
+    std::vector<unsigned char> message_bytes;
+    if (!decode_hex(message_hex, message_bytes, xsink, "decoding GSSAPI verifyMic message")) {
+        return nullptr;
+    }
+    std::vector<unsigned char> mic_bytes;
+    if (!decode_hex(mic_hex, mic_bytes, xsink, "decoding GSSAPI verifyMic MIC token")) {
+        return nullptr;
+    }
+    if (mic_bytes.empty()) {
+        xsink->raiseException("KRB5-TOKEN-ERROR", "decoding GSSAPI verifyMic MIC token: token cannot be empty");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi verifyMic")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc message = GSS_C_EMPTY_BUFFER;
+    message.value = message_bytes.empty() ? nullptr : message_bytes.data();
+    message.length = message_bytes.size();
+
+    gss_buffer_desc mic = GSS_C_EMPTY_BUFFER;
+    mic.value = mic_bytes.data();
+    mic.length = mic_bytes.size();
+
+    gss_qop_t qop_state = 0;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_verify_mic(&min_stat, ctx, &message, &mic, &qop_state);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "verifying GSSAPI MIC");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssMicVerifyInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    rv->setKeyValue("qop", (int64)qop_state, xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
 int64 QoreGssClientContext::getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink) {
     if (output_size < 0 || output_size > UINT32_MAX) {
         xsink->raiseException("KRB5-GSS-ARG-ERROR", "output size must be between 0 and %u bytes", UINT32_MAX);
@@ -1166,6 +1288,97 @@ QoreHashNode* QoreGssAcceptorContext::unwrap(const char* token_hex, ExceptionSin
     rv->setKeyValue("message",
         encode_hex(static_cast<const unsigned char*>(output.buf.value), output.buf.length), xsink);
     rv->setKeyValue("confidential", conf_state ? true : false, xsink);
+    rv->setKeyValue("qop", (int64)qop_state, xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreHashNode* QoreGssAcceptorContext::getMic(const char* message_hex, int qop, ExceptionSink* xsink) {
+    std::vector<unsigned char> message_bytes;
+    if (!decode_hex(message_hex, message_bytes, xsink, "decoding GSSAPI acceptor getMic message")) {
+        return nullptr;
+    }
+    if (qop < 0) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "qop value cannot be negative");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi acceptor getMic")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input = GSS_C_EMPTY_BUFFER;
+    input.value = message_bytes.empty() ? nullptr : message_bytes.data();
+    input.length = message_bytes.size();
+
+    GssBufferHolder output;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_get_mic(&min_stat, ctx, static_cast<gss_qop_t>(qop), &input, &output.buf);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "computing GSSAPI acceptor MIC");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssMicInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    rv->setKeyValue("token",
+        encode_hex(static_cast<const unsigned char*>(output.buf.value), output.buf.length), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreHashNode* QoreGssAcceptorContext::verifyMic(const char* message_hex, const char* mic_hex,
+        ExceptionSink* xsink) {
+    std::vector<unsigned char> message_bytes;
+    if (!decode_hex(message_hex, message_bytes, xsink, "decoding GSSAPI acceptor verifyMic message")) {
+        return nullptr;
+    }
+    std::vector<unsigned char> mic_bytes;
+    if (!decode_hex(mic_hex, mic_bytes, xsink, "decoding GSSAPI acceptor verifyMic MIC token")) {
+        return nullptr;
+    }
+    if (mic_bytes.empty()) {
+        xsink->raiseException("KRB5-TOKEN-ERROR",
+            "decoding GSSAPI acceptor verifyMic MIC token: token cannot be empty");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi acceptor verifyMic")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc message = GSS_C_EMPTY_BUFFER;
+    message.value = message_bytes.empty() ? nullptr : message_bytes.data();
+    message.length = message_bytes.size();
+
+    gss_buffer_desc mic = GSS_C_EMPTY_BUFFER;
+    mic.value = mic_bytes.data();
+    mic.length = mic_bytes.size();
+
+    gss_qop_t qop_state = 0;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_verify_mic(&min_stat, ctx, &message, &mic, &qop_state);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "verifying GSSAPI acceptor MIC");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssMicVerifyInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
     rv->setKeyValue("qop", (int64)qop_state, xsink);
     if (*xsink) {
         return nullptr;
@@ -2054,6 +2267,90 @@ QoreKrb5Credentials* QoreKrb5Context::acquireServiceCredentials(const QoreKrb5Cr
     return rv.release();
 }
 
+QoreListNode* QoreKrb5Context::listCredentialCaches(ExceptionSink* xsink) const {
+    if (qore_check_cancel(xsink, "listing credential caches")) {
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreListNode> rv(new QoreListNode(hashdeclKrb5CredentialCacheInfo->getTypeInfo()), xsink);
+    Krb5CccolCursorHolder cursor(ctx);
+
+    krb5_error_code rc = cursor.start();
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR",
+            "starting credential cache collection enumeration");
+        return nullptr;
+    }
+
+    while (true) {
+        if (qore_check_cancel(xsink, "listing credential caches")) {
+            return nullptr;
+        }
+
+        krb5_ccache cc = nullptr;
+        rc = krb5_cccol_cursor_next(ctx, cursor.cursor, &cc);
+        if (rc) {
+            krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR",
+                "enumerating credential cache collection");
+            return nullptr;
+        }
+        if (!cc) {
+            break;
+        }
+
+        ReferenceHolder<QoreHashNode> info(new QoreHashNode(hashdeclKrb5CredentialCacheInfo, xsink), xsink);
+        if (*xsink) {
+            krb5_cc_close(ctx, cc);
+            return nullptr;
+        }
+
+        const char* type = krb5_cc_get_type(ctx, cc);
+        const char* name = krb5_cc_get_name(ctx, cc);
+        info->setKeyValue("type", new QoreStringNode(type ? type : ""), xsink);
+        info->setKeyValue("name", new QoreStringNode(name ? name : ""), xsink);
+
+        char* full_name = nullptr;
+        rc = krb5_cc_get_full_name(ctx, cc, &full_name);
+        if (!rc && full_name) {
+            info->setKeyValue("full_name", new QoreStringNode(full_name), xsink);
+            krb5_free_string(ctx, full_name);
+        } else {
+            info->setKeyValue("full_name", new QoreStringNode(""), xsink);
+        }
+
+        krb5_principal princ = nullptr;
+        rc = krb5_cc_get_principal(ctx, cc, &princ);
+        if (!rc && princ) {
+            info->setKeyValue("has_principal", true, xsink);
+            QoreStringNode* princ_str = krb5_unparse_principal(ctx, princ, xsink, "KRB5-CACHE-ERROR",
+                "rendering credential cache principal");
+            krb5_free_principal(ctx, princ);
+            if (*xsink) {
+                xsink->clear();
+                info->setKeyValue("has_principal", false, xsink);
+                info->setKeyValue("principal", QoreValue(), xsink);
+            } else {
+                info->setKeyValue("principal", princ_str, xsink);
+            }
+        } else {
+            info->setKeyValue("has_principal", false, xsink);
+            info->setKeyValue("principal", QoreValue(), xsink);
+        }
+
+        krb5_cc_close(ctx, cc);
+
+        if (*xsink) {
+            return nullptr;
+        }
+        rv->push(info.release(), xsink);
+        if (*xsink) {
+            return nullptr;
+        }
+    }
+
+    return rv.release();
+}
+
 QoreKrb5Keytab::QoreKrb5Keytab(const char* keytab_name, bool use_default, ExceptionSink* xsink) {
     krb5_error_code rc = krb5_init_context(&ctx);
     if (rc) {
@@ -2326,6 +2623,9 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     hashdeclGssStepInfo = init_hashdecl_GssStepInfo(krb5ns);
     hashdeclGssWrapInfo = init_hashdecl_GssWrapInfo(krb5ns);
     hashdeclGssUnwrapInfo = init_hashdecl_GssUnwrapInfo(krb5ns);
+    hashdeclGssMicInfo = init_hashdecl_GssMicInfo(krb5ns);
+    hashdeclGssMicVerifyInfo = init_hashdecl_GssMicVerifyInfo(krb5ns);
+    hashdeclKrb5CredentialCacheInfo = init_hashdecl_Krb5CredentialCacheInfo(krb5ns);
 
     krb5ns.addSystemClass(initKrb5PrincipalClass(krb5ns));
     krb5ns.addSystemClass(initKrb5CredentialsClass(krb5ns));

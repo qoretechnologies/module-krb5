@@ -78,6 +78,26 @@ hashdecl Qore::Krb5::Krb5InitialCredentialsOptions {
     *list<int> enctypes;
 }
 
+//! Metadata for a credential cache discovered by collection enumeration
+/**
+*/
+hashdecl Qore::Krb5::Krb5CredentialCacheInfo {
+    //! Cache residual name, for example \c "default" or \c "krb5cc_1000"
+    string name;
+
+    //! Cache backend type, for example \c "FILE", \c "MEMORY", or \c "KCM"
+    string type;
+
+    //! Full cache specification including type, for example \c "FILE:/tmp/krb5cc_1000"
+    string full_name;
+
+    //! True if the cache has an initialized primary principal
+    bool has_principal;
+
+    //! Primary principal string if available, or \c NOTHING
+    *string principal;
+}
+
 //! Kerberos runtime context helper
 /** This class exposes default realm and credential-cache helpers that are
     useful for service configuration, diagnostics, and test setup.
@@ -314,4 +334,21 @@ Krb5Credentials Krb5Context::acquireServiceCredentials(Krb5CredentialCache[QoreK
     ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALS, getProgram()), xsink);
     rv->setPrivate(CID_KRB5CREDENTIALS, creds.release());
     return rv.release();
+}
+
+//! Lists all credential caches known to the Kerberos credential cache collection
+/** Enumerates credential caches using the MIT krb5 credential cache
+    collection API. This discovers caches across all configured backends
+    (FILE, MEMORY, KCM, KEYRING, etc.).
+
+    Caches whose principal cannot be read are included with
+    \c has_principal set to \c False and \c principal set to \c NOTHING.
+
+    @return a list of @ref Qore::Krb5::Krb5CredentialCacheInfo entries
+
+    @throw KRB5-CACHE-ERROR if the collection cursor cannot be opened
+    or enumeration fails
+*/
+list<hash<Krb5CredentialCacheInfo>> Krb5Context::listCredentialCaches() {
+    return ctx->listCredentialCaches(xsink);
 }

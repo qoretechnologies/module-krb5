@@ -108,6 +108,22 @@ hashdecl Qore::Krb5::GssUnwrapInfo {
     int qop;
 }
 
+//! Result of a GSSAPI @ref Qore::Krb5::GssClientContext::getMic() operation
+/**
+*/
+hashdecl Qore::Krb5::GssMicInfo {
+    //! Hex-encoded MIC token
+    string token;
+}
+
+//! Result of a GSSAPI @ref Qore::Krb5::GssClientContext::verifyMic() operation
+/**
+*/
+hashdecl Qore::Krb5::GssMicVerifyInfo {
+    //! Reported GSSAPI quality-of-protection value
+    int qop;
+}
+
 //! Creates an initiator-side GSSAPI context for the given service principal
 /** @param service_principal a Kerberos service principal such as
     \c "HTTP/qorus.example.com@EXAMPLE.COM"
@@ -272,4 +288,38 @@ hash<GssUnwrapInfo> GssClientContext::unwrap(string token_hex) {
 */
 int GssClientContext::getWrapSizeLimit(int output_size, bool confidential = True, int qop = 0) {
     return ctx->getWrapSizeLimit(output_size, confidential, static_cast<int>(qop), xsink);
+}
+
+//! Computes a GSSAPI MIC (Message Integrity Code) over a hex-encoded message
+/** The context must be complete before this method can be called.
+
+    @param message_hex message bytes encoded as hexadecimal
+    @param qop requested GSSAPI quality-of-protection value; defaults to 0
+
+    @return a @ref Qore::Krb5::GssMicInfo with the hex-encoded MIC token
+
+    @throw KRB5-TOKEN-ERROR if \a message_hex is not valid hexadecimal
+    @throw KRB5-GSS-ARG-ERROR if \a qop is negative
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-ERROR if GSSAPI MIC computation fails
+*/
+hash<GssMicInfo> GssClientContext::getMic(string message_hex, int qop = 0) {
+    return ctx->getMic(message_hex->c_str(), static_cast<int>(qop), xsink);
+}
+
+//! Verifies a GSSAPI MIC over a hex-encoded message
+/** The context must be complete before this method can be called.
+
+    @param message_hex message bytes encoded as hexadecimal
+    @param mic_hex MIC token bytes encoded as hexadecimal
+
+    @return a @ref Qore::Krb5::GssMicVerifyInfo with the reported QOP value
+
+    @throw KRB5-TOKEN-ERROR if \a message_hex or \a mic_hex is not valid
+    hexadecimal, or if \a mic_hex is empty
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-ERROR if GSSAPI MIC verification fails
+*/
+hash<GssMicVerifyInfo> GssClientContext::verifyMic(string message_hex, string mic_hex) {
+    return ctx->verifyMic(message_hex->c_str(), mic_hex->c_str(), xsink);
 }

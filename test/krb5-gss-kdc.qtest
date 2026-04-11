@@ -24,6 +24,8 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
         addTestCase("delegation round trip", \testDelegationRoundTrip());
         addTestCase("delegation not requested", \testDelegationNotRequested());
         addTestCase("delegation credential extracted only once", \testDelegationExtractedOnlyOnce());
+        addTestCase("gss mic round trip", \testGssMicRoundTrip());
+        addTestCase("gss mic tamper detection", \testGssMicTamperDetection());
 
         set_return_value(main());
     }
@@ -540,6 +542,53 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
         # Second extraction fails — ownership was transferred
         assertThrows("KRB5-GSS-DELEGATION-ERROR", sub() {
             acceptor.getDelegatedCredential();
+        });
+    }
+
+    private testGssMicRoundTrip() {
+        hash<auto> setup = setupGssCredentials("mic-roundtrip");
+        string channelBindingHex = "746573742d6d69632d726f756e6474726970";
+
+        Qore::Krb5::GssClientContext initiator(setup.servicePrincipal, setup.initiatorCred,
+            getClientOptions(channelBindingHex));
+        Qore::Krb5::GssAcceptorContext acceptor(setup.acceptorCred, getAcceptorOptions(channelBindingHex));
+        performGssExchange(initiator, acceptor);
+
+        string messageHex = "68656c6c6f";
+
+        # Client getMic → acceptor verifyMic
+        hash<Qore::Krb5::GssMicInfo> clientMic = initiator.getMic(messageHex);
+        assertTrue(clientMic.token.val());
+        hash<Qore::Krb5::GssMicVerifyInfo> acceptorVerify = acceptor.verifyMic(messageHex, clientMic.token);
+        assertEq(0, acceptorVerify.qop);
+
+        # Acceptor getMic → client verifyMic
+        hash<Qore::Krb5::GssMicInfo> acceptorMic = acceptor.getMic(messageHex);
+        assertTrue(acceptorMic.token.val());
+        hash<Qore::Krb5::GssMicVerifyInfo> clientVerify = initiator.verifyMic(messageHex, acceptorMic.token);
+        assertEq(0, clientVerify.qop);
+
+        # Empty message MIC also works
+        hash<Qore::Krb5::GssMicInfo> emptyMic = initiator.getMic("");
+        assertTrue(emptyMic.token.val());
+        acceptor.verifyMic("", emptyMic.token);
+    }
+
+    private testGssMicTamperDetection() {
+        hash<auto> setup = setupGssCredentials("mic-tamper");
+        string channelBindingHex = "746573742d6d69632d74616d706572";
+
+        Qore::Krb5::GssClientContext initiator(setup.servicePrincipal, setup.initiatorCred,
+            getClientOptions(channelBindingHex));
+        Qore::Krb5::GssAcceptorContext acceptor(setup.acceptorCred, getAcceptorOptions(channelBindingHex));
+        performGssExchange(initiator, acceptor);
+
+        string messageHex = "68656c6c6f";
+        hash<Qore::Krb5::GssMicInfo> mic = initiator.getMic(messageHex);
+
+        # Verify with a different message — should fail
+        assertThrows("KRB5-GSS-ERROR", sub() {
+            acceptor.verifyMic("776f726c64", mic.token);
         });
     }
 }

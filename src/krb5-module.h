@@ -63,6 +63,9 @@ DLLLOCAL TypedHashDecl* init_hashdecl_GssClientContextOptions(QoreNamespace& ns)
 DLLLOCAL TypedHashDecl* init_hashdecl_GssStepInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_GssWrapInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_GssUnwrapInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssMicInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssMicVerifyInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_Krb5CredentialCacheInfo(QoreNamespace& ns);
 
 extern QoreClass* QC_KRB5CONTEXT;
 extern qore_classid_t CID_KRB5CONTEXT;
@@ -89,6 +92,9 @@ DLLLOCAL extern TypedHashDecl* hashdeclGssClientContextOptions;
 DLLLOCAL extern TypedHashDecl* hashdeclGssStepInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclGssWrapInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclGssUnwrapInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclGssMicInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclGssMicVerifyInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclKrb5CredentialCacheInfo;
 
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);
@@ -149,6 +155,8 @@ public:
     DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* wrap(const char* message_hex, bool confidential, int qop, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* unwrap(const char* token_hex, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* getMic(const char* message_hex, int qop, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* verifyMic(const char* message_hex, const char* mic_hex, ExceptionSink* xsink);
     DLLLOCAL int64 getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink);
 };
 
@@ -176,6 +184,8 @@ public:
     DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* wrap(const char* message_hex, bool confidential, int qop, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* unwrap(const char* token_hex, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* getMic(const char* message_hex, int qop, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* verifyMic(const char* message_hex, const char* mic_hex, ExceptionSink* xsink);
     DLLLOCAL int64 getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink);
     DLLLOCAL QoreGssCredential* getDelegatedCredential(ExceptionSink* xsink);
 };
@@ -249,6 +259,7 @@ public:
         const QoreKrb5Principal& client, ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5Credentials* acquireServiceCredentials(const QoreKrb5CredentialCache& cache,
         const QoreKrb5Principal& service, ExceptionSink* xsink) const;
+    DLLLOCAL QoreListNode* listCredentialCaches(ExceptionSink* xsink) const;
 };
 
 class QoreKrb5Keytab : public AbstractPrivateData {

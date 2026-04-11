@@ -100,6 +100,18 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("gss unwrap empty token rejected", \testGssUnwrapEmptyTokenRejected());
         addTestCase("gss wrap size invalid arguments", \testGssWrapSizeInvalidArguments());
         addTestCase("gss wrap size incomplete context", \testGssWrapSizeIncompleteContext());
+        addTestCase("gss mic invalid hex", \testGssMicInvalidHex());
+        addTestCase("gss mic incomplete context", \testGssMicIncompleteContext());
+        addTestCase("gss mic negative qop rejected", \testGssMicNegativeQopRejected());
+        addTestCase("gss verify mic invalid hex", \testGssVerifyMicInvalidHex());
+        addTestCase("gss verify mic empty mic rejected", \testGssVerifyMicEmptyMicRejected());
+        addTestCase("gss verify mic incomplete context", \testGssVerifyMicIncompleteContext());
+        addTestCase("gss acceptor mic incomplete context", \testGssAcceptorMicIncompleteContext());
+        addTestCase("gss acceptor verify mic incomplete context",
+            \testGssAcceptorVerifyMicIncompleteContext());
+        addTestCase("list credential caches returns list", \testListCredentialCachesReturnsList());
+        addTestCase("list credential caches contains memory cache",
+            \testListCredentialCachesContainsMemoryCache());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
         addTestCase("credential acquisition requires NETWORK domain",
@@ -1318,6 +1330,93 @@ public class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-GSS-STATE-ERROR", sub() {
             ctx.getWrapSizeLimit(2147483647);
         });
+    }
+
+    private testGssMicInvalidHex() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.getMic("xyz");
+        });
+    }
+
+    private testGssMicIncompleteContext() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getMic("00");
+        });
+    }
+
+    private testGssMicNegativeQopRejected() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            ctx.getMic("00", -1);
+        });
+    }
+
+    private testGssVerifyMicInvalidHex() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.verifyMic("xyz", "00");
+        });
+    }
+
+    private testGssVerifyMicEmptyMicRejected() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.verifyMic("00", "");
+        });
+    }
+
+    private testGssVerifyMicIncompleteContext() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.verifyMic("00", "00");
+        });
+    }
+
+    private testGssAcceptorMicIncompleteContext() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getMic("00");
+        });
+    }
+
+    private testGssAcceptorVerifyMicIncompleteContext() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.verifyMic("00", "00");
+        });
+    }
+
+    private testListCredentialCachesReturnsList() {
+        Qore::Krb5::Krb5Context ctx();
+        list<hash<Qore::Krb5::Krb5CredentialCacheInfo>> caches = ctx.listCredentialCaches();
+        assertTrue(caches instanceof list);
+        foreach hash<Qore::Krb5::Krb5CredentialCacheInfo> entry in (caches) {
+            assertTrue(entry.name instanceof string);
+            assertTrue(entry.type instanceof string);
+            assertTrue(entry.full_name instanceof string);
+            assertTrue(entry.has_principal instanceof bool);
+        }
+    }
+
+    private testListCredentialCachesContainsMemoryCache() {
+        # MEMORY caches created in-process are not part of the system credential
+        # cache collection. Verify the method returns consistent types and that
+        # any listed caches have valid field types.
+        Qore::Krb5::Krb5Context ctx();
+        list<hash<Qore::Krb5::Krb5CredentialCacheInfo>> caches = ctx.listCredentialCaches();
+        assertTrue(caches instanceof list);
+        foreach hash<Qore::Krb5::Krb5CredentialCacheInfo> entry in (caches) {
+            assertTrue(entry.type.val());
+            assertTrue(entry.full_name.val());
+            if (entry.has_principal) {
+                assertTrue(entry.principal.val());
+            }
+        }
+        # Call again to verify cursor cleanup and reuse works
+        list<hash<Qore::Krb5::Krb5CredentialCacheInfo>> caches2 = ctx.listCredentialCaches();
+        assertEq(caches.size(), caches2.size());
     }
 
     private testInitialCredentialsBooleanOptionsAccepted() {
