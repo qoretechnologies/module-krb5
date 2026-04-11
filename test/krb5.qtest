@@ -3,8 +3,32 @@
 %requires QUnit
 %requires krb5
 %requires Krb5Util
+%requires Logger
 
 %exec-class Krb5ModuleTest
+
+class CaptureLogAppender inherits Qore::Logger::LoggerAppender {
+    private {
+        list<string> messages = ();
+    }
+
+    constructor() : LoggerAppender("capture") {
+    }
+
+    list<string> getMessages() {
+        return messages;
+    }
+
+    private auto serializeImpl(Qore::Logger::LoggerEvent event) {
+        return event.getMessage();
+    }
+
+    public processEventImpl(int type, auto params) {
+        if (type == Qore::Logger::LoggerAppender::EVENT_LOG) {
+            push messages, string(params);
+        }
+    }
+}
 
 public class Krb5ModuleTest inherits QUnit::Test {
     constructor() : Test("Krb5ModuleTest", "1.0") {
@@ -97,8 +121,6 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("gss wrap confidential false incomplete context",
             \testGssWrapConfidentialFalseIncompleteContext());
         addTestCase("gss wrap size limit boundary values", \testGssWrapSizeLimitBoundaryValues());
-        addTestCase("initial credentials boolean options accepted",
-            \testInitialCredentialsBooleanOptionsAccepted());
         addTestCase("initial credentials negative start time rejected",
             \testInitialCredentialsNegativeStartTimeRejected());
         addTestCase("initial credentials start time overflow rejected",
@@ -137,9 +159,21 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testSpnegoNegotiateTokenOddLengthRejected());
         addTestCase("spnego negotiate token invalid hex rejected",
             \testSpnegoNegotiateTokenInvalidHexRejected());
+        addTestCase("spnego negotiate authorization header",
+            \testSpnegoNegotiateAuthorizationHeader());
+        addTestCase("spnego negotiate header invalid rejected",
+            \testSpnegoNegotiateHeaderInvalidRejected());
+        addTestCase("spnego response info and headers",
+            \testSpnegoResponseInfoAndHeaders());
+        addTestCase("spnego response token validation",
+            \testSpnegoResponseTokenValidation());
+        addTestCase("spnego logger diagnostics safe",
+            \testSpnegoLoggerDiagnosticsSafe());
         addTestCase("spnego parse response empty rejected", \testSpnegoParseResponseEmptyRejected());
         addTestCase("spnego parse response invalid data rejected",
             \testSpnegoParseResponseInvalidDataRejected());
+        addTestCase("spnego parse response length bounds rejected",
+            \testSpnegoParseResponseLengthBoundsRejected());
         addTestCase("spnego round trip", \testSpnegoRoundTrip());
         addTestCase("renew credentials empty cache", \testRenewCredentialsEmptyCache());
         addTestCase("renew credentials sandbox deny", \testRenewCredentialsSandboxDeny());
@@ -1435,16 +1469,10 @@ public class Krb5ModuleTest inherits QUnit::Test {
         string b64 = Krb5Util::negotiateSpnegoToken(gssHex);
         assertTrue(b64.val());
 
-        # Decode and verify the structure contains the SPNEGO OID and original token
+        # Decode and verify the exact DER structure.
         binary decoded = parse_base64_string(b64);
-        assertTrue(decoded.size() > 0);
-        # First byte should be APPLICATION[0] = 0x60
-        assertEq(0x60, decoded[0]);
-        # Should contain the SPNEGO OID bytes: 2b 06 01 05 05 02
-        string decodedHex = make_hex_string(decoded);
-        assertTrue(decodedHex.find("2b0601050502") >= 0);
-        # Should contain the original token bytes
-        assertTrue(decodedHex.find(gssHex) >= 0);
+        assertEq("602706062b0601050502a01d301ba00d300b06092a864886f712010202a20a0408" + gssHex,
+            make_hex_string(decoded));
     }
 
     private testSpnegoNegotiateTokenEmptyRejected() {
@@ -1465,6 +1493,102 @@ public class Krb5ModuleTest inherits QUnit::Test {
         });
     }
 
+    private testSpnegoNegotiateAuthorizationHeader() {
+        string gssHex = "deadbeefcafebabe";
+        string header = Krb5Util::buildNegotiateAuthorizationHeader(gssHex);
+        assertTrue(header =~ /^Negotiate /);
+
+        string token = Krb5Util::extractNegotiateHeaderToken("Authorization: " + header);
+        assertEq(header.substr(10), token);
+
+        binary decoded = parse_base64_string(token);
+        assertEq("602706062b0601050502a01d301ba00d300b06092a864886f712010202a20a0408" + gssHex,
+            make_hex_string(decoded));
+    }
+
+    private testSpnegoNegotiateHeaderInvalidRejected() {
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::extractNegotiateHeaderToken("Basic abc");
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::extractNegotiateHeaderToken("Negotiate");
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::extractNegotiateHeaderToken("WWW-Authenticate: Negotiate !!!");
+        });
+    }
+
+    private testSpnegoResponseInfoAndHeaders() {
+        string tokenHex = "cafebabe12345678";
+        string header = Krb5Util::buildNegotiateWwwAuthenticateHeader(tokenHex, 1);
+        assertTrue(header =~ /^Negotiate /);
+
+        hash<Krb5Util::SpnegoResponseInfo> info = Krb5Util::parseNegotiateResponseHeader(
+            "WWW-Authenticate: " + header);
+        assertEq(tokenHex, info.token);
+        assertEq(1, info.neg_state);
+        assertEq("accept-incomplete", info.neg_state_name);
+        assertEq(tokenHex, Krb5Util::parseSpnegoResponse(Krb5Util::extractNegotiateHeaderToken(header)));
+
+        string finalHeader = Krb5Util::buildNegotiateWwwAuthenticateHeader(NOTHING, 0);
+        hash<Krb5Util::SpnegoResponseInfo> finalInfo = Krb5Util::parseNegotiateResponseHeader(finalHeader);
+        assertEq(0, finalInfo.neg_state);
+        assertEq("accept-completed", finalInfo.neg_state_name);
+        assertFalse(exists finalInfo.token);
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoResponse(Krb5Util::extractNegotiateHeaderToken(finalHeader));
+        });
+
+        assertEq("Negotiate", Krb5Util::buildNegotiateWwwAuthenticateHeader());
+    }
+
+    private testSpnegoResponseTokenValidation() {
+        string tokenHex = "cafebabe12345678";
+        hash<Krb5Util::SpnegoResponseInfo> tokenOnly =
+            Krb5Util::parseSpnegoResponseInfo(Krb5Util::negotiateSpnegoResponseToken(tokenHex));
+        assertEq(tokenHex, tokenOnly.token);
+        assertFalse(exists tokenOnly.neg_state);
+
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoResponseToken();
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoResponseToken("");
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoResponseToken("abc");
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoResponseToken("xyz0");
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoResponseToken(NOTHING, -1);
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoResponseToken(NOTHING, 4);
+        });
+    }
+
+    private testSpnegoLoggerDiagnosticsSafe() {
+        Qore::Logger::Logger logger("krb5-spnego-test", "DEBUG");
+        CaptureLogAppender appender();
+        logger.addAppender(appender);
+        appender.open();
+
+        string secretLikeToken = "deadbeefcafebabe";
+        string header = Krb5Util::buildNegotiateAuthorizationHeader(secretLikeToken, logger);
+        string b64 = Krb5Util::extractNegotiateHeaderToken(header, logger);
+        Krb5Util::parseSpnegoResponseInfo(Krb5Util::negotiateSpnegoResponseToken("cafebabe", 1, logger), logger);
+
+        list<string> messages = appender.getMessages();
+        assertTrue(messages.size() >= 4);
+        string combined = foldl $1 + "\n" + $2, messages;
+        assertTrue(combined.find("Krb5Util SPNEGO") >= 0);
+        assertTrue(combined.find("token_bytes") >= 0);
+        assertEq(-1, combined.find(secretLikeToken));
+        assertEq(-1, combined.find(b64));
+    }
+
     private testSpnegoParseResponseEmptyRejected() {
         assertThrows("KRB5-SPNEGO-ERROR", sub() {
             Krb5Util::parseSpnegoResponse("");
@@ -1475,6 +1599,18 @@ public class Krb5ModuleTest inherits QUnit::Test {
         # Valid base64 but not a valid SPNEGO NegTokenResp
         assertThrows("KRB5-SPNEGO-ERROR", sub() {
             Krb5Util::parseSpnegoResponse(make_base64_string(<deadbeef>));
+        });
+    }
+
+    private testSpnegoParseResponseLengthBoundsRejected() {
+        # Outer NegTokenResp length exceeds available data.
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoResponse(make_base64_string(<a1053000>));
+        });
+
+        # responseToken OCTET STRING length exceeds the containing field.
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoResponse(make_base64_string(<a1083006a2040408cafe>));
         });
     }
 

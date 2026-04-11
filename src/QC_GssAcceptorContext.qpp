@@ -193,7 +193,7 @@ int GssAcceptorContext::getWrapSizeLimit(int output_size, bool confidential = Tr
 
 //! Returns the delegated credential from a completed context
 /** When the initiator requests credential delegation
-    (@ref Qore::Krb5::GSS_DELEG_FLAG) and the acceptor context completes
+    (\c Qore::Krb5::GSS_DELEG_FLAG) and the acceptor context completes
     successfully, this method extracts the delegated credential handle.
     The credential can then be used to initiate new GSSAPI contexts on
     behalf of the original initiator.

@@ -9,6 +9,8 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
     constructor() : Test("Krb5GssKdcIntegrationTest", "1.0") {
         addTestCase("full gss initiator acceptor exchange", \testFullGssExchange());
         addTestCase("initial credentials reject wrong password", \testInitialCredentialsRejectWrongPassword());
+        addTestCase("initial credentials boolean options accepted",
+            \testInitialCredentialsBooleanOptionsAccepted());
         addTestCase("gss channel binding mismatch rejected", \testGssChannelBindingMismatchRejected());
         addTestCase("keytab credential acquisition with kdc", \testKeytabCredentialAcquisition());
         addTestCase("gss context reset and renegotiate", \testGssContextResetAndRenegotiate());
@@ -239,6 +241,25 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
         hash<Qore::Krb5::Krb5CredentialsInfo> info = creds.getInfo();
         assertEq(servicePrincipal, info.client);
         assertTrue(info.end_time > info.start_time);
+    }
+
+    private testInitialCredentialsBooleanOptionsAccepted() {
+        string clientPrincipal = requireEnv("MODULE_KRB5_TEST_CLIENT_PRINCIPAL");
+        string clientPassword = requireEnv("MODULE_KRB5_TEST_CLIENT_PASSWORD");
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p(clientPrincipal);
+
+        list<string> boolOpts = ("forwardable", "proxiable", "canonicalize", "anonymous", "pac_request",
+            "change_password_prompt");
+        list<bool> values = (True, True, True, False, True, False);
+        for (int i = 0; i < boolOpts.size(); i++) {
+            hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts = getInitOptions();
+            opts{boolOpts[i]} = values[i];
+            Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(p, clientPassword, opts);
+            hash<Qore::Krb5::Krb5CredentialsInfo> info = creds.getInfo();
+            assertEq(clientPrincipal, info.client);
+        }
     }
 
     private testGssContextResetAndRenegotiate() {

@@ -70,17 +70,38 @@ output buffers are released even on early-return error paths.
 
 - Both initiator-side (`GssClientContext`) and acceptor-side (`GssAcceptorContext`)
   GSSAPI contexts, including channel bindings and message protection.
-- Initial credential acquisition from passwords and keytabs.
-- Keytab management: adding entries and enumerating.
+- Initial credential acquisition from passwords and keytabs, credential
+  renewal, and service-ticket acquisition from an existing TGT.
+- Keytab management: adding, removing, and enumerating entries.
+- SPNEGO helpers for HTTP Negotiate token envelopes.
+- Basic credential delegation through `GssAcceptorContext`.
 - No KDC replication, admin (kadmin) operations, or prompter callbacks.
+
+## Logging model
+
+Higher-level helper APIs should use `Logger::LoggerInterface` as their
+primary logging integration point. Low-level binary module APIs keep
+exceptions as the behavioral contract and avoid logging directly unless a
+future C++ binding has a clear Qore object lifetime model for logger handles.
+
+Logs must never contain passwords, session keys, raw tickets, raw GSS tokens,
+or delegated credential material. Safe diagnostics include operation names,
+principal names, realms, cache/keytab backend types, enctypes, token sizes,
+and ticket lifetimes.
 
 ## Planned extensions
 
-- **Credential delegation** — extracting delegated credentials from the
-  acceptor context after an exchange with `GSS_C_DELEG_FLAG`.
-- **Credential renewal** — `krb5_get_renewed_creds` for long-running services.
-- **TGS service ticket requests** — `krb5_get_credentials` to obtain service
-  tickets from a TGT without going through GSSAPI.
-- **Keytab entry removal** — `krb5_kt_remove_entry` for key rotation workflows.
-- **SPNEGO helpers** — RFC 4178 NegTokenInit / NegTokenResp envelope
-  construction for HTTP Negotiate integration.
+- **Full HTTP Negotiate helpers** — header parsing/building, `negState`
+  exposure, final responses without `responseToken`, and logger-aware client
+  and server token-loop helpers.
+- **Credential lifecycle helpers** — expiry checks, renewal thresholds, and
+  logger-aware renew-and-store workflows for long-running services.
+- **Keytab rotation helpers** — remove all entries for a principal or kvno,
+  inspect the highest kvno, and validate a keytab entry before removing older
+  material.
+- **Constrained delegation** — S4U2Self and S4U2Proxy for identity-forwarding
+  services.
+- **Deployment diagnostics** — logger-aware validation reports for realm,
+  cache, keytab, service principal, enctype, and ticket state.
+- **Cross-realm trust ergonomics** — helpers around canonicalization and
+  explicit realm handling for multi-tenant deployments.

@@ -274,6 +274,52 @@ public:
     Krb5KeytabCursorHolder& operator=(const Krb5KeytabCursorHolder&) = delete;
 };
 
+class Krb5PrincipalHolder {
+public:
+    krb5_context ctx = nullptr;
+    krb5_principal principal = nullptr;
+
+    DLLLOCAL explicit Krb5PrincipalHolder(krb5_context ctx) : ctx(ctx) {
+    }
+
+    DLLLOCAL ~Krb5PrincipalHolder() {
+        if (principal) {
+            krb5_free_principal(ctx, principal);
+        }
+    }
+
+    DLLLOCAL krb5_principal* out() {
+        return &principal;
+    }
+
+    DLLLOCAL krb5_principal release() {
+        krb5_principal rv = principal;
+        principal = nullptr;
+        return rv;
+    }
+
+    Krb5PrincipalHolder(const Krb5PrincipalHolder&) = delete;
+    Krb5PrincipalHolder& operator=(const Krb5PrincipalHolder&) = delete;
+};
+
+class Krb5CredsContentsHolder {
+public:
+    krb5_context ctx = nullptr;
+    krb5_creds* creds = nullptr;
+
+    DLLLOCAL Krb5CredsContentsHolder(krb5_context ctx, krb5_creds* creds) : ctx(ctx), creds(creds) {
+    }
+
+    DLLLOCAL ~Krb5CredsContentsHolder() {
+        if (creds) {
+            krb5_free_cred_contents(ctx, creds);
+        }
+    }
+
+    Krb5CredsContentsHolder(const Krb5CredsContentsHolder&) = delete;
+    Krb5CredsContentsHolder& operator=(const Krb5CredsContentsHolder&) = delete;
+};
+
 DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc) {
     return rc == KRB5_FCC_NOFILE || rc == KRB5_CC_NOTFOUND || rc == KRB5_CC_END;
 }
@@ -1936,16 +1982,24 @@ QoreKrb5Credentials* QoreKrb5Context::renewCredentials(const QoreKrb5CredentialC
         return nullptr;
     }
 
-    krb5_creds creds;
-    memset(&creds, 0, sizeof(creds));
-    krb5_error_code rc = krb5_get_renewed_creds(ctx, &creds, client.principal, cache.cache, nullptr);
+    Krb5PrincipalHolder client_principal(cache.ctx);
+    krb5_error_code rc = krb5_copy_principal(cache.ctx, client.principal, client_principal.out());
     if (rc) {
-        krb5_raise_exception(xsink, ctx, rc, "KRB5-RENEW-ERROR", "renewing credentials");
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-RENEW-ERROR",
+            "copying client principal for credential renewal");
         return nullptr;
     }
 
-    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(ctx, creds, xsink));
-    krb5_free_cred_contents(ctx, &creds);
+    krb5_creds creds;
+    memset(&creds, 0, sizeof(creds));
+    Krb5CredsContentsHolder creds_holder(cache.ctx, &creds);
+    rc = krb5_get_renewed_creds(cache.ctx, &creds, client_principal.principal, cache.cache, nullptr);
+    if (rc) {
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-RENEW-ERROR", "renewing credentials");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(cache.ctx, creds, xsink));
     if (*xsink) {
         return nullptr;
     }
@@ -1964,43 +2018,36 @@ QoreKrb5Credentials* QoreKrb5Context::acquireServiceCredentials(const QoreKrb5Cr
 
     krb5_creds in_creds;
     memset(&in_creds, 0, sizeof(in_creds));
+    Krb5CredsContentsHolder in_creds_holder(cache.ctx, &in_creds);
 
     // Get the cache's primary principal as the client
-    krb5_principal cache_principal = nullptr;
-    krb5_error_code rc = krb5_cc_get_principal(cache.ctx, cache.cache, &cache_principal);
+    Krb5PrincipalHolder cache_principal(cache.ctx);
+    krb5_error_code rc = krb5_cc_get_principal(cache.ctx, cache.cache, cache_principal.out());
     if (rc) {
         krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
             "reading cache principal for TGS request");
         return nullptr;
     }
 
-    rc = krb5_copy_principal(ctx, cache_principal, &in_creds.client);
-    krb5_free_principal(cache.ctx, cache_principal);
-    if (rc) {
-        krb5_raise_exception(xsink, ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
-            "copying client principal for TGS request");
-        return nullptr;
-    }
+    in_creds.client = cache_principal.release();
 
-    rc = krb5_copy_principal(ctx, service.principal, &in_creds.server);
+    rc = krb5_copy_principal(cache.ctx, service.principal, &in_creds.server);
     if (rc) {
-        krb5_free_principal(ctx, in_creds.client);
-        krb5_raise_exception(xsink, ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
             "copying service principal for TGS request");
         return nullptr;
     }
 
     krb5_creds* out_creds = nullptr;
-    rc = krb5_get_credentials(ctx, 0, cache.cache, &in_creds, &out_creds);
-    krb5_free_cred_contents(ctx, &in_creds);
+    rc = krb5_get_credentials(cache.ctx, 0, cache.cache, &in_creds, &out_creds);
     if (rc) {
-        krb5_raise_exception(xsink, ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
             "acquiring service credentials via TGS");
         return nullptr;
     }
 
-    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(ctx, *out_creds, xsink));
-    krb5_free_creds(ctx, out_creds);
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(cache.ctx, *out_creds, xsink));
+    krb5_free_creds(cache.ctx, out_creds);
     if (*xsink) {
         return nullptr;
     }
