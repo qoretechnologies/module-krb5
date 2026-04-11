@@ -90,5 +90,27 @@ if (DOXYGEN_FOUND)
     add_dependencies(docs-module QORE_MOD_DOX_FILES)
 
     # Two-phase doc build so the binary module's mainpage can @ref into Krb5Util.
-    qore_binary_module_two_phase_docs(${module_name} "Krb5Util")
+    # Prefer the qore_binary_module_two_phase_docs() helper from recent Qore
+    # releases; fall back to an inline implementation on older Qore versions
+    # that predate the macro. Both use the correct ../../Krb5Util/html relative
+    # path (two levels of ".." to escape the binary module's own html/ and
+    # docs/${module_name}/ directories back to the shared docs/ root).
+    if (COMMAND qore_binary_module_two_phase_docs)
+        qore_binary_module_two_phase_docs(${module_name} "Krb5Util")
+    else()
+        file(APPEND ${CMAKE_BINARY_DIR}/Doxyfile
+            "\n# Suppress warnings for initial pass (no user module TAGFILES available)\nWARN_IF_DOC_ERROR = NO\n")
+        file(COPY_FILE ${CMAKE_BINARY_DIR}/Doxyfile ${CMAKE_BINARY_DIR}/Doxyfile.final)
+        file(APPEND ${CMAKE_BINARY_DIR}/Doxyfile.final
+            "\n# Final pass: enable user module cross-references and re-enable doc error warnings\nTAGFILES = ${CMAKE_BINARY_DIR}/Krb5Util.tag=../../Krb5Util/html\nWARN_IF_DOC_ERROR = YES\n")
+        add_custom_target(docs-module-final
+            COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_BINARY_DIR}/Doxyfile.final
+            COMMAND ${QORE_DOCS_ENV} ${QORE_QDX_COMMAND} --post ${CMAKE_BINARY_DIR}/docs/${module_name}/html ${CMAKE_BINARY_DIR}/docs/${module_name}/html/search
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            COMMENT "Generating API documentation with Doxygen (final pass with Krb5Util cross-references)"
+            VERBATIM
+        )
+        add_dependencies(docs-module-final docs-Krb5Util)
+        add_dependencies(docs docs-module-final)
+    endif()
 endif()
