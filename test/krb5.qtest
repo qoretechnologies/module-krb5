@@ -41,6 +41,12 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("gss credential empty keytab rejected", \testGssCredentialEmptyKeytabRejected());
         addTestCase("gss credential cache sandbox deny", \testGssCredentialCacheSandboxDeny());
         addTestCase("gss credential keytab sandbox deny", \testGssCredentialKeytabSandboxDeny());
+        addTestCase("gss wrap invalid hex", \testGssWrapInvalidHex());
+        addTestCase("gss unwrap invalid hex", \testGssUnwrapInvalidHex());
+        addTestCase("gss wrap incomplete context", \testGssWrapIncompleteContext());
+        addTestCase("gss unwrap empty token rejected", \testGssUnwrapEmptyTokenRejected());
+        addTestCase("gss wrap size invalid arguments", \testGssWrapSizeInvalidArguments());
+        addTestCase("gss wrap size incomplete context", \testGssWrapSizeIncompleteContext());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
     }
@@ -622,6 +628,51 @@ class Krb5ModuleTest inherits QUnit::Test {
         }
         assertTrue(caught);
         cleanupSandboxKeytab(keytabPath);
+    }
+
+    private testGssWrapInvalidHex() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.wrap("xyz");
+        });
+    }
+
+    private testGssUnwrapInvalidHex() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.unwrap("xyz");
+        });
+    }
+
+    private testGssWrapIncompleteContext() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.wrap("00");
+        });
+    }
+
+    private testGssUnwrapEmptyTokenRejected() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.unwrap("");
+        });
+    }
+
+    private testGssWrapSizeInvalidArguments() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            ctx.getWrapSizeLimit(-1);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            ctx.getWrapSizeLimit(128, True, -1);
+        });
+    }
+
+    private testGssWrapSizeIncompleteContext() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getWrapSizeLimit(128);
+        });
     }
 
     private testGssInvalidHex() {

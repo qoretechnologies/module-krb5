@@ -46,6 +46,13 @@ opts.mechanism = "kerberos";
 
 Qore::Krb5::GssClientContext gss("LDAP/ad.example.com@EXAMPLE.COM", cred, opts);
 hash<auto> token = gss.step();
+
+if (gss.isComplete()) {
+    int max_plaintext = gss.getWrapSizeLimit(16384, True);
+    hash<auto> wrapped = gss.wrap("68656c6c6f", True);
+    hash<auto> plain = gss.unwrap(wrapped.token);
+    printf("max=%d confidential=%y message=%s\n", max_plaintext, plain.confidential, plain.message);
+}
     @endcode
 
     @section krb5examples_keytab Memory Keytab Setup

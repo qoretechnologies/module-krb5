@@ -520,6 +520,110 @@ QoreHashNode* QoreGssClientContext::step(const char* token_hex, ExceptionSink* x
     return rv.release();
 }
 
+QoreHashNode* QoreGssClientContext::wrap(const char* message_hex, bool confidential, int qop, ExceptionSink* xsink) {
+    std::vector<unsigned char> message_bytes;
+    if (!decode_hex(message_hex, message_bytes, xsink, "decoding GSSAPI wrap message")) {
+        return nullptr;
+    }
+    if (qop < 0) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "qop value cannot be negative");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi message wrapping")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input = GSS_C_EMPTY_BUFFER;
+    input.value = message_bytes.empty() ? nullptr : message_bytes.data();
+    input.length = message_bytes.size();
+
+    int conf_state = 0;
+    gss_buffer_desc output = GSS_C_EMPTY_BUFFER;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_wrap(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop, &input, &conf_state, &output);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "wrapping GSSAPI message");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
+    rv->setKeyValue("token", encode_hex(static_cast<const unsigned char*>(output.value), output.length), xsink);
+    rv->setKeyValue("confidential", conf_state ? true : false, xsink);
+    gss_release_buffer(&min_stat, &output);
+    return rv.release();
+}
+
+QoreHashNode* QoreGssClientContext::unwrap(const char* token_hex, ExceptionSink* xsink) {
+    std::vector<unsigned char> token_bytes;
+    if (!decode_hex(token_hex, token_bytes, xsink, "decoding GSSAPI wrapped token")) {
+        return nullptr;
+    }
+    if (token_bytes.empty()) {
+        xsink->raiseException("KRB5-TOKEN-ERROR", "decoding GSSAPI wrapped token: token cannot be empty");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi message unwrapping")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input = GSS_C_EMPTY_BUFFER;
+    input.value = token_bytes.data();
+    input.length = token_bytes.size();
+
+    int conf_state = 0;
+    gss_qop_t qop_state = 0;
+    gss_buffer_desc output = GSS_C_EMPTY_BUFFER;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_unwrap(&min_stat, ctx, &input, &output, &conf_state, &qop_state);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "unwrapping GSSAPI message");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(autoTypeInfo), xsink);
+    rv->setKeyValue("message", encode_hex(static_cast<const unsigned char*>(output.value), output.length), xsink);
+    rv->setKeyValue("confidential", conf_state ? true : false, xsink);
+    rv->setKeyValue("qop", (int64)qop_state, xsink);
+    gss_release_buffer(&min_stat, &output);
+    return rv.release();
+}
+
+int64 QoreGssClientContext::getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink) {
+    if (output_size < 0 || output_size > UINT32_MAX) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "output size must be between 0 and %u bytes", UINT32_MAX);
+        return 0;
+    }
+    if (qop < 0) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "qop value cannot be negative");
+        return 0;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return 0;
+    }
+    if (qore_check_cancel(xsink, "checking GSSAPI wrap size limit")) {
+        return 0;
+    }
+
+    OM_uint32 max_input_size = 0;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_wrap_size_limit(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop,
+        (OM_uint32)output_size, &max_input_size);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "checking GSSAPI wrap size limit");
+        return 0;
+    }
+    return max_input_size;
+}
+
 QoreGssCredential::QoreGssCredential(const QoreKrb5CredentialCache& cache, ExceptionSink* xsink) {
     if (!krb5_check_cache_access(cache.ctx, cache.cache, QSEC_READ, xsink, "importing GSSAPI credential from cache")) {
         return;

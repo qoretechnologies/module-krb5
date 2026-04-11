@@ -136,3 +136,52 @@ hash<auto> GssClientContext::step() {
 hash<auto> GssClientContext::step(string token_hex) {
     return ctx->step(token_hex->c_str(), xsink);
 }
+
+//! Wraps a hex-encoded message with GSSAPI integrity or confidentiality protection
+/** The context must be complete before this method can be called.
+
+    @param message_hex message bytes encoded as hexadecimal
+    @param confidential request confidentiality in addition to integrity; defaults to True
+    @param qop requested GSSAPI quality-of-protection value; defaults to 0
+
+    @return a hash with the following keys:
+    - \c token: hex-encoded wrapped token
+    - \c confidential: True if confidentiality was applied
+
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-ERROR if GSSAPI wrapping fails
+*/
+hash<auto> GssClientContext::wrap(string message_hex, *bool confidential = True, *int qop = 0) {
+    return ctx->wrap(message_hex->c_str(), confidential ? (bool)confidential : true, qop ? (int)qop : 0, xsink);
+}
+
+//! Unwraps a hex-encoded GSSAPI protected token
+/** The context must be complete before this method can be called.
+
+    @param token_hex wrapped token bytes encoded as hexadecimal
+
+    @return a hash with the following keys:
+    - \c message: hex-encoded unwrapped message
+    - \c confidential: True if confidentiality was applied to the token
+    - \c qop: reported GSSAPI quality-of-protection value
+
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-ERROR if GSSAPI unwrapping fails
+*/
+hash<auto> GssClientContext::unwrap(string token_hex) {
+    return ctx->unwrap(token_hex->c_str(), xsink);
+}
+
+//! Returns the maximum plaintext size for a wrapped token size
+/** The context must be complete before this method can be called.
+
+    @param output_size requested maximum wrapped-token size in bytes
+    @param confidential request confidentiality in addition to integrity; defaults to True
+    @param qop requested GSSAPI quality-of-protection value; defaults to 0
+
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-ARG-ERROR if \c output_size or \c qop is invalid
+*/
+int GssClientContext::getWrapSizeLimit(int output_size, *bool confidential = True, *int qop = 0) {
+    return ctx->getWrapSizeLimit(output_size, confidential ? (bool)confidential : true, qop ? (int)qop : 0, xsink);
+}

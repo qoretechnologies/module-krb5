@@ -128,6 +128,9 @@ public:
     DLLLOCAL bool isComplete() const;
     DLLLOCAL void reset();
     DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* wrap(const char* message_hex, bool confidential, int qop, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* unwrap(const char* token_hex, ExceptionSink* xsink);
+    DLLLOCAL int64 getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink);
 };
 
 class QoreGssCredential : public AbstractPrivateData {
