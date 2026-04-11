@@ -38,7 +38,8 @@ The module provides:
   and confidentiality layers
 - Keytab entry removal for key rotation workflows
 - Keytab rotation helpers for highest-kvno discovery and old-entry cleanup
-- a `Krb5Util` helper module with Qore-language Kerberos and SPNEGO utilities
+- a `Krb5Util` helper module with Qore-language Kerberos and SPNEGO utilities,
+  including HTTP Negotiate client/server step helpers
 
 Higher-level helper APIs should use `Logger::LoggerInterface` for diagnostics.
 Logs must not include passwords, keys, raw tickets, raw GSS tokens, or
@@ -77,6 +78,14 @@ integrations:
       "WWW-Authenticate: Negotiate ...");
   hash<Krb5Util::SpnegoResponseInfo> info =
       Krb5Util::parseNegotiateResponseHeader("Negotiate ...");
+
+Client/server HTTP Negotiate exchanges can use header-level step helpers:
+
+  hash<Krb5Util::NegotiateClientStepInfo> client_step =
+      Krb5Util::buildNegotiateClientStep(initiator, www_authenticate_header);
+  hash<Krb5Util::NegotiateServerStepInfo> server_step =
+      Krb5Util::acceptNegotiateAuthorizationHeader(acceptor,
+          client_step.authorization_header);
 
 Credential metadata can be evaluated without exposing key or ticket material:
 

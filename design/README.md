@@ -75,7 +75,8 @@ output buffers are released even on early-return error paths.
 - Credential lifecycle helpers for expiry and renewal-threshold evaluation.
 - Keytab management: adding, removing, enumerating, highest-kvno discovery,
   and old-entry cleanup.
-- SPNEGO helpers for HTTP Negotiate token envelopes.
+- SPNEGO helpers for HTTP Negotiate token envelopes and client/server
+  header-level token loops.
 - Basic credential delegation through `GssAcceptorContext`.
 - No KDC replication, admin (kadmin) operations, or prompter callbacks.
 
@@ -93,9 +94,8 @@ and ticket lifetimes.
 
 ## Planned extensions
 
-- **Full HTTP Negotiate helpers** — header parsing/building, `negState`
-  exposure, final responses without `responseToken`, and logger-aware client
-  and server token-loop helpers.
+- **HTTP Negotiate workflows** — web-server adapter examples, session binding
+  patterns, and policy checks around completed contexts.
 - **Credential lifecycle workflows** — logger-aware renew-and-store workflows
   for long-running services.
 - **Keytab rotation workflows** — dry-run reports, policy checks, and

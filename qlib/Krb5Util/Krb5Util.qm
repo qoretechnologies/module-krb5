@@ -118,6 +118,45 @@ public namespace Krb5Util {
         *string mech_list_mic;
     }
 
+    #! HTTP Negotiate client step result
+    public hashdecl NegotiateClientStepInfo {
+        #! True if the initiator context is complete after this step
+        bool complete;
+
+        #! Negotiated GSS flags when a GSS step was performed
+        *int flags;
+
+        #! Reported security-context lifetime when a GSS step was performed
+        *int lifetime;
+
+        #! Hex-encoded GSS output token, if one was produced
+        *string token;
+
+        #! HTTP Authorization header value to send, if one was produced
+        *string authorization_header;
+    }
+
+    #! HTTP Negotiate server step result
+    public hashdecl NegotiateServerStepInfo {
+        #! True if the acceptor context is complete after this step
+        bool complete;
+
+        #! Negotiated GSS flags
+        int flags;
+
+        #! Reported security-context lifetime
+        int lifetime;
+
+        #! Hex-encoded GSS output token, if one was produced
+        *string token;
+
+        #! HTTP WWW-Authenticate header value to send
+        string www_authenticate_header;
+
+        #! Authenticated initiator principal, if known
+        *string initiator_name;
+    }
+
     #! Credential validity and renewal status computed from credential metadata
     public hashdecl CredentialLifecycleInfo {
         #! Evaluation time as seconds since the Unix epoch
@@ -618,6 +657,216 @@ string authHeader = "Negotiate " + Krb5Util::negotiateSpnegoToken(step.token);
         string token = negotiateSpnegoToken(gss_token_hex, logger);
         logSpnego(logger, sprintf("built Authorization Negotiate header token_b64_bytes=%d", token.size()));
         return "Negotiate " + token;
+    }
+
+    #! Parses a base64-encoded SPNEGO NegTokenInit and extracts the contained GSS mechToken as hex
+    /** @param base64_token base64-encoded SPNEGO NegTokenInit token from
+        an HTTP \c "Authorization: Negotiate <base64>" header
+        @param logger optional logger for safe diagnostics; raw token data is
+        not logged
+
+        @return hex-encoded GSS token extracted from the mechToken field
+
+        @throw KRB5-SPNEGO-ERROR if the token cannot be parsed or does not
+        contain a mechToken
+    */
+    public string sub parseSpnegoInitialToken(string base64_token,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        if (!base64_token.val()) {
+            throw "KRB5-SPNEGO-ERROR", "SPNEGO initial token cannot be empty";
+        }
+
+        binary data;
+        try {
+            data = parse_base64_string(base64_token);
+        } catch (hash<ExceptionInfo> ex) {
+            throw "KRB5-SPNEGO-ERROR", sprintf("invalid base64: %s", ex.desc);
+        }
+
+        int pos = 0;
+        if (data.size() < 2 || data[pos] != 0x60) {
+            throw "KRB5-SPNEGO-ERROR", sprintf("expected initial context token (tag 0x60), got 0x%02x",
+                data.size() ? data[pos] : -1);
+        }
+        ++pos;
+        int outerLen;
+        (outerLen, pos) = parseDerLength(data, pos);
+        checkDerBounds(data, pos, outerLen, "initial context token");
+        int outerEnd = pos + outerLen;
+
+        int oidStart = pos;
+        if (pos >= outerEnd || data[pos] != 0x06) {
+            throw "KRB5-SPNEGO-ERROR", "initial context token does not contain a mechanism OID";
+        }
+        ++pos;
+        int oidLen;
+        (oidLen, pos) = parseDerLength(data, pos);
+        checkDerBounds(data, pos, oidLen, "SPNEGO OID");
+        if (pos + oidLen > outerEnd) {
+            throw "KRB5-SPNEGO-ERROR", "SPNEGO OID exceeds initial context token";
+        }
+        if (make_hex_string(data.substr(oidStart, pos + oidLen - oidStart)) != "06062b0601050502") {
+            throw "KRB5-SPNEGO-ERROR", "initial context token does not use the SPNEGO mechanism OID";
+        }
+        pos += oidLen;
+
+        if (pos >= outerEnd || data[pos] != 0xa0) {
+            throw "KRB5-SPNEGO-ERROR", "initial context token does not contain a NegTokenInit choice";
+        }
+        ++pos;
+        int choiceLen;
+        (choiceLen, pos) = parseDerLength(data, pos);
+        checkDerBounds(data, pos, choiceLen, "NegTokenInit choice");
+        int choiceEnd = pos + choiceLen;
+        if (choiceEnd != outerEnd) {
+            throw "KRB5-SPNEGO-ERROR", "NegTokenInit choice length does not match initial context token";
+        }
+
+        if (pos >= choiceEnd || data[pos] != 0x30) {
+            throw "KRB5-SPNEGO-ERROR", "NegTokenInit choice does not contain a SEQUENCE";
+        }
+        ++pos;
+        int seqLen;
+        (seqLen, pos) = parseDerLength(data, pos);
+        checkDerBounds(data, pos, seqLen, "NegTokenInit SEQUENCE");
+        int seqEnd = pos + seqLen;
+        if (seqEnd != choiceEnd) {
+            throw "KRB5-SPNEGO-ERROR", "NegTokenInit SEQUENCE length does not match choice length";
+        }
+
+        while (pos < seqEnd) {
+            int tag = data[pos];
+            ++pos;
+            int fieldLen;
+            (fieldLen, pos) = parseDerLength(data, pos);
+            checkDerBounds(data, pos, fieldLen, "NegTokenInit field");
+            int fieldEnd = pos + fieldLen;
+            if (fieldEnd > seqEnd) {
+                throw "KRB5-SPNEGO-ERROR", "NegTokenInit field length exceeds SEQUENCE length";
+            }
+
+            if (tag == 0xa2) {
+                if (pos >= fieldEnd || data[pos] != 0x04) {
+                    throw "KRB5-SPNEGO-ERROR", "mechToken field does not contain OCTET STRING";
+                }
+                ++pos;
+                int tokenLen;
+                (tokenLen, pos) = parseDerLength(data, pos);
+                checkDerBounds(data, pos, tokenLen, "mechToken OCTET STRING");
+                if (pos + tokenLen != fieldEnd) {
+                    throw "KRB5-SPNEGO-ERROR", "mechToken OCTET STRING length does not match field length";
+                }
+                string token = make_hex_string(data.substr(pos, tokenLen));
+                logSpnego(logger, sprintf("parsed NegTokenInit token_bytes=%d", token.size() / 2));
+                return token;
+            }
+            pos = fieldEnd;
+        }
+
+        throw "KRB5-SPNEGO-ERROR", "SPNEGO initial token does not contain a mechToken field";
+    }
+
+    #! Parses an HTTP Negotiate authorization header and extracts the contained GSS token as hex
+    public string sub parseNegotiateAuthorizationHeader(string header,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        return parseSpnegoInitialToken(extractNegotiateHeaderToken(header, logger), logger);
+    }
+
+    #! Advances a GSS initiator context and returns an HTTP Negotiate Authorization header when needed
+    /** @param ctx initiator-side GSS context
+        @param www_authenticate_header optional HTTP Negotiate server response
+        from a previous round
+        @param logger optional logger for safe diagnostics; raw token data is
+        not logged
+
+        @return client-side HTTP Negotiate step information
+
+        @throw KRB5-NEGOTIATE-ERROR if a server response without a token is
+        received before the initiator context is complete
+        @throw KRB5-SPNEGO-ERROR if the response header is invalid
+        @throw KRB5-GSS-ERROR if the GSSAPI step fails
+    */
+    public hash<NegotiateClientStepInfo> sub buildNegotiateClientStep(Qore::Krb5::GssClientContext ctx,
+            *string www_authenticate_header = NOTHING, *Qore::Logger::LoggerInterface logger = NOTHING) {
+        *string inputToken;
+        bool performedStep = False;
+
+        if (exists www_authenticate_header) {
+            hash<SpnegoResponseInfo> response = parseNegotiateResponseHeader(www_authenticate_header, logger);
+            if (exists response.token) {
+                inputToken = response.token;
+            } else {
+                bool complete = ctx.isComplete();
+                if (!complete) {
+                    throw "KRB5-NEGOTIATE-ERROR",
+                        "server Negotiate response did not include a token before initiator completion";
+                }
+                logSpnego(logger, sprintf("client accepted final Negotiate response neg_state=%y",
+                    exists response.neg_state ? response.neg_state : NOTHING));
+                return <NegotiateClientStepInfo>{
+                    "complete": complete,
+                };
+            }
+        }
+
+        hash<Qore::Krb5::GssStepInfo> step = exists inputToken ? ctx.step(inputToken) : ctx.step();
+        performedStep = True;
+        hash<NegotiateClientStepInfo> rv = <NegotiateClientStepInfo>{
+            "complete": step.complete,
+            "flags": step.flags,
+            "lifetime": step.lifetime,
+        };
+        if (exists step.token) {
+            rv.token = step.token;
+            rv.authorization_header = buildNegotiateAuthorizationHeader(step.token, logger);
+        }
+
+        logSpnego(logger, sprintf("client Negotiate step complete=%y token_bytes=%d performed_step=%y",
+            rv.complete, exists rv.token ? rv.token.size() / 2 : 0, performedStep));
+        return rv;
+    }
+
+    #! Processes an HTTP Negotiate Authorization header with an acceptor context
+    /** @param ctx acceptor-side GSS context
+        @param authorization_header HTTP Negotiate Authorization header value
+        or full header line
+        @param logger optional logger for safe diagnostics; raw token data is
+        not logged
+
+        @return server-side HTTP Negotiate step information, including the
+        \c WWW-Authenticate header value to send
+
+        @throw KRB5-SPNEGO-ERROR if the authorization header is invalid
+        @throw KRB5-GSS-ERROR if the GSSAPI step fails
+    */
+    public hash<NegotiateServerStepInfo> sub acceptNegotiateAuthorizationHeader(
+            Qore::Krb5::GssAcceptorContext ctx, string authorization_header,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        string inputToken = parseNegotiateAuthorizationHeader(authorization_header, logger);
+        hash<Qore::Krb5::GssStepInfo> step = ctx.step(inputToken);
+        int negState = step.complete ? 0 : 1;
+
+        hash<NegotiateServerStepInfo> rv = <NegotiateServerStepInfo>{
+            "complete": step.complete,
+            "flags": step.flags,
+            "lifetime": step.lifetime,
+            "www_authenticate_header": exists step.token
+                ? buildNegotiateWwwAuthenticateHeader(step.token, negState, logger)
+                : buildNegotiateWwwAuthenticateHeader(NOTHING, negState, logger),
+        };
+        if (exists step.token) {
+            rv.token = step.token;
+        }
+
+        *string initiatorName = ctx.getInitiatorName();
+        if (initiatorName) {
+            rv.initiator_name = initiatorName;
+        }
+
+        logSpnego(logger, sprintf("server Negotiate step complete=%y token_bytes=%d neg_state=%d initiator=%y",
+            rv.complete, exists rv.token ? rv.token.size() / 2 : 0, negState,
+            exists rv.initiator_name ? rv.initiator_name : NOTHING));
+        return rv;
     }
 
     #! Builds a base64-encoded SPNEGO NegTokenResp token

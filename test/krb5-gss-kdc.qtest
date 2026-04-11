@@ -2,12 +2,14 @@
 %modern
 %requires QUnit
 %requires krb5
+%requires Krb5Util
 
 %exec-class Krb5GssKdcIntegrationTest
 
 public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
     constructor() : Test("Krb5GssKdcIntegrationTest", "1.0") {
         addTestCase("full gss initiator acceptor exchange", \testFullGssExchange());
+        addTestCase("http negotiate helper exchange", \testHttpNegotiateHelperExchange());
         addTestCase("initial credentials reject wrong password", \testInitialCredentialsRejectWrongPassword());
         addTestCase("initial credentials boolean options accepted",
             \testInitialCredentialsBooleanOptionsAccepted());
@@ -180,6 +182,45 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
 
         assertTrue(initiator.getWrapSizeLimit(16384, True) > 0);
         assertTrue(acceptor.getWrapSizeLimit(16384, True) > 0);
+    }
+
+    private testHttpNegotiateHelperExchange() {
+        string servicePrincipal = requireEnv("MODULE_KRB5_TEST_SERVICE_PRINCIPAL");
+        string clientPrincipal = requireEnv("MODULE_KRB5_TEST_CLIENT_PRINCIPAL");
+        hash<auto> setup = setupGssCredentials("http-negotiate");
+        string channelBindingHex = "746573742d687474702d6e65676f74696174652d68656c706572";
+
+        Qore::Krb5::GssClientContext initiator(servicePrincipal, setup.initiatorCred,
+            getClientOptions(channelBindingHex));
+        Qore::Krb5::GssAcceptorContext acceptor(setup.acceptorCred, getAcceptorOptions(channelBindingHex));
+
+        *string serverHeader;
+        int rounds = 0;
+        while ((!initiator.isComplete() || !acceptor.isComplete()) && rounds < 10) {
+            ++rounds;
+            hash<Krb5Util::NegotiateClientStepInfo> clientStep = serverHeader
+                ? Krb5Util::buildNegotiateClientStep(initiator, serverHeader)
+                : Krb5Util::buildNegotiateClientStep(initiator);
+            serverHeader = NOTHING;
+            if (exists clientStep.authorization_header) {
+                assertTrue(clientStep.authorization_header =~ /^Negotiate /);
+                hash<Krb5Util::NegotiateServerStepInfo> serverStep =
+                    Krb5Util::acceptNegotiateAuthorizationHeader(acceptor, clientStep.authorization_header);
+                assertTrue(serverStep.www_authenticate_header =~ /^Negotiate /);
+                serverHeader = serverStep.www_authenticate_header;
+            } else {
+                assertTrue(clientStep.complete);
+            }
+        }
+
+        assertTrue(rounds < 10, "HTTP Negotiate helper loop must finish within the bounded token loop");
+        assertTrue(initiator.isComplete());
+        assertTrue(acceptor.isComplete());
+        assertEq(clientPrincipal, acceptor.getInitiatorName());
+
+        hash<Qore::Krb5::GssWrapInfo> wrapped = initiator.wrap("68656c6c6f", True);
+        hash<Qore::Krb5::GssUnwrapInfo> plain = acceptor.unwrap(wrapped.token);
+        assertEq("68656c6c6f", plain.message);
     }
 
     private testInitialCredentialsRejectWrongPassword() {

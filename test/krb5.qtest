@@ -173,6 +173,10 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testSpnegoNegotiateTokenInvalidHexRejected());
         addTestCase("spnego negotiate authorization header",
             \testSpnegoNegotiateAuthorizationHeader());
+        addTestCase("spnego parse initial token",
+            \testSpnegoParseInitialToken());
+        addTestCase("spnego client step rejects premature final response",
+            \testSpnegoClientStepRejectsPrematureFinalResponse());
         addTestCase("spnego negotiate header invalid rejected",
             \testSpnegoNegotiateHeaderInvalidRejected());
         addTestCase("spnego response info and headers",
@@ -1682,6 +1686,31 @@ public class Krb5ModuleTest inherits QUnit::Test {
         binary decoded = parse_base64_string(token);
         assertEq("602706062b0601050502a01d301ba00d300b06092a864886f712010202a20a0408" + gssHex,
             make_hex_string(decoded));
+    }
+
+    private testSpnegoParseInitialToken() {
+        string gssHex = "deadbeefcafebabe";
+        string header = Krb5Util::buildNegotiateAuthorizationHeader(gssHex);
+        assertEq(gssHex, Krb5Util::parseNegotiateAuthorizationHeader("Authorization: " + header));
+        assertEq(gssHex, Krb5Util::parseSpnegoInitialToken(Krb5Util::extractNegotiateHeaderToken(header)));
+
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoInitialToken("");
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoInitialToken(make_base64_string(<6005>));
+        });
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoInitialToken(Krb5Util::negotiateSpnegoResponseToken("cafebabe", 1));
+        });
+    }
+
+    private testSpnegoClientStepRejectsPrematureFinalResponse() {
+        Qore::Krb5::GssClientContext initiator("HTTP/qorus.example.com@EXAMPLE.COM");
+        string finalHeader = Krb5Util::buildNegotiateWwwAuthenticateHeader(NOTHING, 0);
+        assertThrows("KRB5-NEGOTIATE-ERROR", sub() {
+            Krb5Util::buildNegotiateClientStep(initiator, finalHeader);
+        });
     }
 
     private testSpnegoNegotiateHeaderInvalidRejected() {
