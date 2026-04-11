@@ -8,6 +8,8 @@
 public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
     constructor() : Test("Krb5GssKdcIntegrationTest", "1.0") {
         addTestCase("full gss initiator acceptor exchange", \testFullGssExchange());
+        addTestCase("initial credentials reject wrong password", \testInitialCredentialsRejectWrongPassword());
+        addTestCase("gss channel binding mismatch rejected", \testGssChannelBindingMismatchRejected());
 
         set_return_value(main());
     }
@@ -18,6 +20,32 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
             testSkip(sprintf("environment variable %s is not set", name));
         }
         return value;
+    }
+
+    private hash<Qore::Krb5::Krb5InitialCredentialsOptions> getInitOptions() {
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> initOpts();
+        initOpts.canonicalize = True;
+        initOpts.enctypes = (
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96,
+            Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96,
+        );
+        return initOpts;
+    }
+
+    private hash<Qore::Krb5::GssClientContextOptions> getClientOptions(string channelBindingHex) {
+        hash<Qore::Krb5::GssClientContextOptions> opts();
+        opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG
+            | Qore::Krb5::GSS_CHANNEL_BOUND_FLAG;
+        opts.mechanism = "kerberos";
+        opts.name_type = "krb5-principal";
+        opts.channel_binding_application_data_hex = channelBindingHex;
+        return opts;
+    }
+
+    private hash<Qore::Krb5::GssAcceptorContextOptions> getAcceptorOptions(string channelBindingHex) {
+        hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+        opts.channel_binding_application_data_hex = channelBindingHex;
+        return opts;
     }
 
     private testFullGssExchange() {
@@ -31,15 +59,8 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
         Qore::Krb5::Krb5Principal clientPrincipalObj(clientPrincipal);
         Qore::Krb5::Krb5Principal servicePrincipalObj(servicePrincipal);
 
-        hash<Qore::Krb5::Krb5InitialCredentialsOptions> initOpts();
-        initOpts.canonicalize = True;
-        initOpts.enctypes = (
-            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96,
-            Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96,
-        );
-
         Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(
-            clientPrincipalObj, clientPassword, initOpts);
+            clientPrincipalObj, clientPassword, getInitOptions());
         auto cc = ctx.createMemoryCredentialCache(clientPrincipalObj,
             sprintf("module-krb5-gss-kdc-%s", realm));
         cc.initialize(clientPrincipalObj);
@@ -51,18 +72,9 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
 
         string channelBindingHex = "746573742d746c732d7365727665722d656e642d62696e64696e67";
 
-        hash<Qore::Krb5::GssClientContextOptions> clientOpts();
-        clientOpts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG
-            | Qore::Krb5::GSS_CHANNEL_BOUND_FLAG;
-        clientOpts.mechanism = "kerberos";
-        clientOpts.name_type = "krb5-principal";
-        clientOpts.channel_binding_application_data_hex = channelBindingHex;
-
-        hash<Qore::Krb5::GssAcceptorContextOptions> acceptorOpts();
-        acceptorOpts.channel_binding_application_data_hex = channelBindingHex;
-
-        Qore::Krb5::GssClientContext initiator(servicePrincipal, initiatorCred, clientOpts);
-        Qore::Krb5::GssAcceptorContext acceptor(acceptorCred, acceptorOpts);
+        Qore::Krb5::GssClientContext initiator(servicePrincipal, initiatorCred,
+            getClientOptions(channelBindingHex));
+        Qore::Krb5::GssAcceptorContext acceptor(acceptorCred, getAcceptorOptions(channelBindingHex));
 
         *string initiatorToken;
         *string acceptorToken;
@@ -97,5 +109,51 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
 
         assertTrue(initiator.getWrapSizeLimit(16384, True) > 0);
         assertTrue(acceptor.getWrapSizeLimit(16384, True) > 0);
+    }
+
+    private testInitialCredentialsRejectWrongPassword() {
+        string clientPrincipal = requireEnv("MODULE_KRB5_TEST_CLIENT_PRINCIPAL");
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal clientPrincipalObj(clientPrincipal);
+
+        assertThrows("KRB5-INIT-CREDS-ERROR", sub() {
+            ctx.acquireCredentialsWithPassword(clientPrincipalObj, "wrong-password", getInitOptions());
+        });
+    }
+
+    private testGssChannelBindingMismatchRejected() {
+        string realm = requireEnv("MODULE_KRB5_TEST_REALM");
+        string clientPrincipal = requireEnv("MODULE_KRB5_TEST_CLIENT_PRINCIPAL");
+        string clientPassword = requireEnv("MODULE_KRB5_TEST_CLIENT_PASSWORD");
+        string servicePrincipal = requireEnv("MODULE_KRB5_TEST_SERVICE_PRINCIPAL");
+        string serviceKeytab = requireEnv("MODULE_KRB5_TEST_SERVICE_KEYTAB");
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal clientPrincipalObj(clientPrincipal);
+        Qore::Krb5::Krb5Principal servicePrincipalObj(servicePrincipal);
+
+        Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(
+            clientPrincipalObj, clientPassword, getInitOptions());
+        auto cc = ctx.createMemoryCredentialCache(clientPrincipalObj,
+            sprintf("module-krb5-gss-kdc-cb-mismatch-%s", realm));
+        cc.initialize(clientPrincipalObj);
+        cc.storeCredentials(creds);
+
+        Qore::Krb5::GssCredential initiatorCred = Qore::Krb5::GssCredential::fromCredentialCache(cc);
+        Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:" + serviceKeytab);
+        Qore::Krb5::GssCredential acceptorCred = Qore::Krb5::GssCredential::fromKeytab(kt, servicePrincipalObj);
+
+        Qore::Krb5::GssClientContext initiator(servicePrincipal, initiatorCred,
+            getClientOptions("746573742d6368616e6e656c2d62696e64696e672d676f6f64"));
+        Qore::Krb5::GssAcceptorContext acceptor(acceptorCred,
+            getAcceptorOptions("746573742d6368616e6e656c2d62696e64696e672d626164"));
+
+        hash<Qore::Krb5::GssStepInfo> initiatorInfo = initiator.step();
+        assertTrue(initiatorInfo.token != NOTHING);
+        assertThrows("KRB5-GSS-ERROR", sub() {
+            acceptor.step(initiatorInfo.token);
+        });
+        assertFalse(acceptor.isComplete());
     }
 }
