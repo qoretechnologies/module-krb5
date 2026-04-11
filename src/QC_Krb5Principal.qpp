@@ -44,6 +44,26 @@ Krb5Principal::constructor(string principal_string) {
     self->setPrivate(CID_KRB5PRINCIPAL, p.release());
 }
 
+//! Parses an enterprise principal string
+/** Enterprise principals are used by Active Directory UPN logins; the input
+    name is parsed with \c KRB5_PRINCIPAL_PARSE_ENTERPRISE.
+
+    @param principal_string an enterprise principal such as
+    \c "alice@example.com@EXAMPLE.COM"
+    @throw KRB5-PRINCIPAL-ERROR if the principal cannot be parsed
+*/
+static Krb5Principal Krb5Principal::parseEnterprise(string principal_string) {
+    SimpleRefHolder<QoreKrb5Principal> p(new QoreKrb5Principal(principal_string->c_str(),
+        KRB5_PRINCIPAL_PARSE_ENTERPRISE, xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5PRINCIPAL, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5PRINCIPAL, p.release());
+    return rv.release();
+}
+
 //! Creates an exact copy of the object
 /**
 */

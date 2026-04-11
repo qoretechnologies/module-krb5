@@ -1,9 +1,12 @@
 /** @page krb5security Security Notes
 
     - This module never logs secrets.
+    - Password-based initial credential acquisition is noninteractive by default.
+    - Initial credential acquisition supports FAST armor cache configuration.
+    - Initial credential acquisition supports explicit enctype requests.
     - GSSAPI token inputs are validated before decoding.
     - Credential metadata APIs do not expose session-key or ticket bytes.
     - File-backed credential caches and keytabs honor Qore filesystem sandboxing.
-    - Blocking operations should honor cooperative cancellation as the module evolves.
-    - Future releases will add credential acquisition and keytab rotation APIs.
+    - Acquisition operations check cooperative cancellation before blocking calls.
+    - Future releases will add keytab rotation APIs.
 */

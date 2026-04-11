@@ -25,8 +25,14 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("file keytab sandbox deny", \testFileKeytabSandboxDeny());
         addTestCase("file keytab sandbox allow", \testFileKeytabSandboxAllow());
         addTestCase("principal parsing", \testPrincipalParsing());
+        addTestCase("enterprise principal parsing", \testEnterprisePrincipalParsing());
         addTestCase("principal copy and equality", \testPrincipalCopy());
         addTestCase("principal component bounds", \testPrincipalBounds());
+        addTestCase("initial credentials empty password rejected", \testInitialCredentialsEmptyPasswordRejected());
+        addTestCase("initial credentials empty enctype list rejected", \testInitialCredentialsEmptyEnctypeListRejected());
+        addTestCase("initial credentials bad keytab rejected", \testInitialCredentialsBadKeytabRejected());
+        addTestCase("initial credentials keytab sandbox deny", \testInitialCredentialsKeytabSandboxDeny());
+        addTestCase("initial credentials FAST cache sandbox deny", \testInitialCredentialsFastCacheSandboxDeny());
         addTestCase("gss target setup", \testGssTargetSetup());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
@@ -364,6 +370,15 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertEq("qorus.example.com", p.getComponent(1));
     }
 
+    private testEnterprisePrincipalParsing() {
+        Qore::Krb5::Krb5Principal p = Qore::Krb5::Krb5Principal::parseEnterprise(
+            "alice@example.com@EXAMPLE.COM");
+        assertEq("EXAMPLE.COM", p.getRealm());
+        assertEq(1, p.getComponentCount());
+        assertEq("alice@example.com", p.getComponent(0));
+        assertEq("alice\\@example.com@EXAMPLE.COM", p.toString());
+    }
+
     private testPrincipalCopy() {
         Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
         Qore::Krb5::Krb5Principal p2 = p.copy();
@@ -375,6 +390,102 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-PRINCIPAL-ERROR", sub() {
             p.getComponent(2);
         });
+    }
+
+    private testInitialCredentialsEmptyPasswordRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        assertThrows("KRB5-INIT-CREDS-ERROR", sub() {
+            hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+            opts.canonicalize = True;
+            opts.pac_request = True;
+            ctx.acquireCredentialsWithPassword(p, "", opts);
+        });
+    }
+
+    private testInitialCredentialsEmptyEnctypeListRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        assertThrows("KRB5-INIT-CREDS-ERROR", sub() {
+            hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+            opts.enctypes = ();
+            ctx.acquireCredentialsWithPassword(p, "secret", opts);
+        });
+    }
+
+    private testInitialCredentialsBadKeytabRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-empty-init-creds");
+        assertThrows("KRB5-INIT-CREDS-ERROR", sub() {
+            hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+            opts.canonicalize = True;
+            opts.pac_request = True;
+            ctx.acquireCredentialsWithKeytab(p, kt, opts);
+        });
+    }
+
+    private testInitialCredentialsKeytabSandboxDeny() {
+        string keytabPath = getSandboxKeytabPath("init-creds-deny");
+        cleanupSandboxKeytab(keytabPath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_init_creds_keytab() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                auto kt = ctx.openKeytab(\"FILE:%s\");
+                ctx.acquireCredentialsWithKeytab(principal, kt);
+            }
+        ", keytabPath), "sandbox_denied_init_creds_keytab");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        bool caught = False;
+        try {
+            p.callFunction("test_denied_init_creds_keytab");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err);
+        }
+        assertTrue(caught);
+        cleanupSandboxKeytab(keytabPath);
+    }
+
+    private testInitialCredentialsFastCacheSandboxDeny() {
+        string cachePath = getSandboxCachePath("fast-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_init_creds_fast_cache() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+                opts.fast_ccache_name = \"FILE:%s\";
+                opts.fast_required = True;
+                opts.canonicalize = True;
+                ctx.acquireCredentialsWithPassword(principal, \"secret\", opts);
+            }
+        ", cachePath), "sandbox_denied_init_creds_fast_cache");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        bool caught = False;
+        try {
+            p.callFunction("test_denied_init_creds_fast_cache");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err);
+        }
+        assertTrue(caught);
+        cleanupSandboxCache(cachePath);
     }
 
     private testGssTargetSetup() {

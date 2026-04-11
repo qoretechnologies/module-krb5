@@ -27,6 +27,59 @@
 
 #include "krb5-module.h"
 
+//! Options for initial credential acquisition
+/** These options map to MIT Kerberos initial-credential options and are
+    intended for noninteractive service and Active Directory authentication.
+
+    @since krb5 0.1
+*/
+hashdecl Qore::Krb5::Krb5InitialCredentialsOptions {
+    //! Service principal for the ticket request; omit for the default TGT service
+    *string service;
+
+    //! Requested ticket start time as seconds since the Unix epoch; 0 means now
+    *int start_time;
+
+    //! Requested ticket lifetime in seconds
+    *int ticket_lifetime;
+
+    //! Requested renewable lifetime in seconds
+    *int renew_lifetime;
+
+    //! Request a forwardable ticket
+    *bool forwardable;
+
+    //! Request a proxiable ticket
+    *bool proxiable;
+
+    //! Request KDC-side canonicalization; recommended for Active Directory UPN logins
+    *bool canonicalize;
+
+    //! Request anonymous initial credentials
+    *bool anonymous;
+
+    //! Request a Windows PAC in the ticket
+    *bool pac_request;
+
+    //! Allow password-change prompts; disabled by default for noninteractive use
+    *bool change_password_prompt;
+
+    //! Require FAST when a FAST armor ccache is provided
+    *bool fast_required;
+
+    //! FAST armor credential-cache specifier, for example \c "FILE:/tmp/krb5cc_armor"
+    *string fast_ccache_name;
+
+    //! Input credential-cache specifier used by the initial-credential exchange
+    *string in_ccache_name;
+
+    //! Output credential-cache specifier used by the initial-credential exchange
+    *string out_ccache_name;
+
+    //! Ordered list of requested Kerberos enctype identifiers
+    *list<int> enctypes;
+}
+
 //! Kerberos runtime context helper
 /** This class exposes default realm and credential-cache helpers that are
     useful for service configuration, diagnostics, and test setup.
@@ -139,5 +192,49 @@ Krb5CredentialCache Krb5Context::createMemoryCredentialCache(Krb5Principal[QoreK
 
     ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALCACHE, getProgram()), xsink);
     rv->setPrivate(CID_KRB5CREDENTIALCACHE, cache.release());
+    return rv.release();
+}
+
+//! Acquires initial credentials using a password
+/** This method is noninteractive and does not log or expose the password.
+
+    @param principal client principal
+    @param password client password
+    @param opts optional @ref Qore::Krb5::Krb5InitialCredentialsOptions
+
+    @throw KRB5-INIT-CREDS-ERROR if credentials cannot be acquired
+*/
+Krb5Credentials Krb5Context::acquireCredentialsWithPassword(Krb5Principal[QoreKrb5Principal] principal,
+        string password, *hash<Krb5InitialCredentialsOptions> opts) {
+    SimpleRefHolder<QoreKrb5Credentials> creds(ctx->acquireCredentialsWithPassword(**principal, password->c_str(),
+        opts, xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALS, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5CREDENTIALS, creds.release());
+    return rv.release();
+}
+
+//! Acquires initial credentials using a keytab
+/** This method reads keys from the provided keytab and returns the acquired
+    credentials without automatically writing them to the default cache.
+
+    @param principal client principal
+    @param keytab keytab containing a matching client key
+    @param opts optional @ref Qore::Krb5::Krb5InitialCredentialsOptions
+
+    @throw KRB5-INIT-CREDS-ERROR if credentials cannot be acquired
+*/
+Krb5Credentials Krb5Context::acquireCredentialsWithKeytab(Krb5Principal[QoreKrb5Principal] principal,
+        Krb5Keytab[QoreKrb5Keytab] keytab, *hash<Krb5InitialCredentialsOptions> opts) {
+    SimpleRefHolder<QoreKrb5Credentials> creds(ctx->acquireCredentialsWithKeytab(**principal, **keytab, opts, xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALS, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5CREDENTIALS, creds.release());
     return rv.release();
 }

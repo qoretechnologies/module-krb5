@@ -6,14 +6,19 @@ The Qore krb5 module provides Kerberos 5 and GSSAPI primitives for Qore.
 
 This initial implementation provides:
 - Kerberos default realm and credential-cache helpers
+- Kerberos initial credential acquisition from passwords and keytabs
 - Kerberos credential metadata and cache store/list helpers
 - Kerberos default keytab and keytab entry-management helpers
 - in-memory credential-cache initialization for tests and service setup
 - filesystem sandbox enforcement for file-backed credential caches
 - filesystem sandbox enforcement for file-backed keytabs
-- Kerberos principal parsing and introspection
+- Kerberos principal parsing, enterprise principal parsing, and introspection
 - GSSAPI initiator target-name handling
 - GSSAPI context stepping with hex-encoded tokens
+
+Initial credential acquisition supports AD-oriented security options such as
+KDC canonicalization, Windows PAC requests, requested enctypes, FAST armor
+credential caches, and input/output credential caches.
 
 The module is designed as the security foundation for enterprise LDAP and
 Active Directory integrations on Linux.

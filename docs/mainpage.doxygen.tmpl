@@ -9,12 +9,13 @@
 
     This initial release focuses on:
     - Kerberos default realm and credential-cache discovery
+    - Kerberos initial credential acquisition from passwords and keytabs
     - Kerberos credential metadata and cache store/list operations
     - Kerberos default keytab discovery and service-key entry management
     - in-memory credential-cache initialization for tests and service setup
     - filesystem sandbox enforcement for file-backed credential caches
     - filesystem sandbox enforcement for file-backed keytabs
-    - Kerberos principal parsing and validation
+    - Kerberos principal parsing, enterprise principal parsing, and validation
     - GSSAPI target-name handling
     - initiator-side GSSAPI token stepping
 
@@ -22,7 +23,9 @@
 
     The module is intended for security-sensitive use. It is designed to be
     used with strict TLS, Kerberos, and Active Directory integrations without
-    weakening enterprise security policies.
+    weakening enterprise security policies. Initial credential acquisition
+    supports noninteractive service use, KDC canonicalization, PAC requests,
+    enctype restrictions, and FAST armor credential caches.
 
     @section krb5classes Main Classes
 

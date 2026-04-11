@@ -36,6 +36,7 @@
 #include <qore/QoreSandboxManager.h>
 
 #include <cctype>
+#include <climits>
 #include <cstdlib>
 #include <ctime>
 
@@ -43,6 +44,7 @@ static QoreNamespace krb5ns("Qore::Krb5");
 
 TypedHashDecl* hashdeclKrb5KeytabEntryInfo = nullptr;
 TypedHashDecl* hashdeclKrb5CredentialsInfo = nullptr;
+TypedHashDecl* hashdeclKrb5InitialCredentialsOptions = nullptr;
 
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
 static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
@@ -263,7 +265,10 @@ DLLLOCAL QoreStringNode* krb5_unparse_principal(krb5_context ctx, krb5_const_pri
     return rv;
 }
 
-QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) {
+QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) : QoreKrb5Principal(p, 0, xsink) {
+}
+
+QoreKrb5Principal::QoreKrb5Principal(const char* p, krb5_flags parse_flags, ExceptionSink* xsink) {
     if (!p || !*p) {
         xsink->raiseException("KRB5-PRINCIPAL-ERROR", "principal string cannot be empty");
         return;
@@ -275,7 +280,7 @@ QoreKrb5Principal::QoreKrb5Principal(const char* p, ExceptionSink* xsink) {
         return;
     }
 
-    rc = krb5_parse_name(ctx, p, &principal);
+    rc = parse_flags ? krb5_parse_name_flags(ctx, p, parse_flags, &principal) : krb5_parse_name(ctx, p, &principal);
     if (rc) {
         krb5_raise_exception(xsink, ctx, rc, "KRB5-PRINCIPAL-ERROR", "parsing kerberos principal");
         return;
@@ -837,6 +842,316 @@ QoreKrb5CredentialCache* QoreKrb5Context::createMemoryCredentialCache(const Qore
     return cache.release();
 }
 
+class QoreKrb5InitCredsOptions {
+public:
+    krb5_context kctx = nullptr;
+    krb5_get_init_creds_opt* opt = nullptr;
+    krb5_deltat start_time = 0;
+    std::string service;
+    std::vector<krb5_enctype> enctypes;
+    std::vector<krb5_ccache> ccaches;
+
+    DLLLOCAL QoreKrb5InitCredsOptions(krb5_context ctx, const QoreHashNode* opts_hash, ExceptionSink* xsink)
+            : kctx(ctx) {
+        krb5_error_code rc = krb5_get_init_creds_opt_alloc(ctx, &opt);
+        if (rc) {
+            krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR",
+                "allocating initial credential options");
+            return;
+        }
+
+        // Enterprise service usage is noninteractive; never prompt unless explicitly requested.
+        krb5_get_init_creds_opt_set_change_password_prompt(opt, 0);
+
+        if (!opts_hash) {
+            return;
+        }
+
+        parse(ctx, opts_hash, xsink);
+    }
+
+    DLLLOCAL ~QoreKrb5InitCredsOptions() {
+        cleanup(kctx);
+    }
+
+    DLLLOCAL void cleanup(krb5_context ctx) {
+        if (!ctx) {
+            return;
+        }
+        if (opt) {
+            krb5_get_init_creds_opt_free(ctx, opt);
+            opt = nullptr;
+        }
+        for (krb5_ccache ccache : ccaches) {
+            krb5_cc_close(ctx, ccache);
+        }
+        ccaches.clear();
+    }
+
+    DLLLOCAL const char* serviceName() const {
+        return service.empty() ? nullptr : service.c_str();
+    }
+
+private:
+    DLLLOCAL static bool hasOption(const QoreHashNode* h, const char* key, QoreValue& v) {
+        v = h->getKeyValue(key);
+        return !v.isNullOrNothing();
+    }
+
+    DLLLOCAL static bool getStringOption(const QoreHashNode* h, const char* key, std::string& out,
+            ExceptionSink* xsink) {
+        QoreValue v;
+        if (!hasOption(h, key, v)) {
+            return false;
+        }
+
+        QoreStringValueHelper str(v, QCS_UTF8, xsink);
+        if (*xsink) {
+            return false;
+        }
+        if (!str->c_str() || !*str->c_str()) {
+            xsink->raiseException("KRB5-INIT-CREDS-ERROR", "option '%s' cannot be empty", key);
+            return false;
+        }
+        out = str->c_str();
+        return true;
+    }
+
+    DLLLOCAL static bool getDeltatOption(const QoreHashNode* h, const char* key, krb5_deltat& out,
+            ExceptionSink* xsink) {
+        QoreValue v;
+        if (!hasOption(h, key, v)) {
+            return false;
+        }
+
+        int64 value = v.getAsBigInt();
+        if (value < 0 || value > INT32_MAX) {
+            xsink->raiseException("KRB5-INIT-CREDS-ERROR",
+                "option '%s' must be between 0 and %d seconds", key, INT32_MAX);
+            return false;
+        }
+        out = (krb5_deltat)value;
+        return true;
+    }
+
+    DLLLOCAL static bool getBoolOption(const QoreHashNode* h, const char* key, bool& out) {
+        QoreValue v;
+        if (!hasOption(h, key, v)) {
+            return false;
+        }
+        out = v.getAsBool();
+        return true;
+    }
+
+    DLLLOCAL int addCcacheOption(krb5_context ctx, const char* key, const char* name, int access_mode,
+            ExceptionSink* xsink) {
+        krb5_ccache ccache = nullptr;
+        krb5_error_code rc = krb5_cc_resolve(ctx, name, &ccache);
+        if (rc) {
+            return krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR",
+                "resolving credential cache option");
+        }
+
+        if (!krb5_check_cache_access(ctx, ccache, access_mode, xsink, "using initial-credential cache option")) {
+            krb5_cc_close(ctx, ccache);
+            return -1;
+        }
+
+        if (!strcmp(key, "fast_ccache_name")) {
+            rc = krb5_get_init_creds_opt_set_fast_ccache(ctx, opt, ccache);
+        } else if (!strcmp(key, "in_ccache_name")) {
+            rc = krb5_get_init_creds_opt_set_in_ccache(ctx, opt, ccache);
+        } else {
+            rc = krb5_get_init_creds_opt_set_out_ccache(ctx, opt, ccache);
+        }
+        if (rc) {
+            krb5_cc_close(ctx, ccache);
+            return krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR",
+                "setting credential cache option");
+        }
+
+        ccaches.push_back(ccache);
+        return 0;
+    }
+
+    DLLLOCAL void parse(krb5_context ctx, const QoreHashNode* h, ExceptionSink* xsink) {
+        getStringOption(h, "service", service, xsink);
+        if (*xsink) {
+            return;
+        }
+
+        getDeltatOption(h, "start_time", start_time, xsink);
+        if (*xsink) {
+            return;
+        }
+
+        krb5_deltat delta = 0;
+        if (getDeltatOption(h, "ticket_lifetime", delta, xsink)) {
+            krb5_get_init_creds_opt_set_tkt_life(opt, delta);
+        }
+        if (*xsink) {
+            return;
+        }
+        if (getDeltatOption(h, "renew_lifetime", delta, xsink)) {
+            krb5_get_init_creds_opt_set_renew_life(opt, delta);
+        }
+        if (*xsink) {
+            return;
+        }
+
+        bool b = false;
+        if (getBoolOption(h, "forwardable", b)) {
+            krb5_get_init_creds_opt_set_forwardable(opt, b ? 1 : 0);
+        }
+        if (getBoolOption(h, "proxiable", b)) {
+            krb5_get_init_creds_opt_set_proxiable(opt, b ? 1 : 0);
+        }
+        if (getBoolOption(h, "canonicalize", b)) {
+            krb5_get_init_creds_opt_set_canonicalize(opt, b ? 1 : 0);
+        }
+        if (getBoolOption(h, "anonymous", b)) {
+            krb5_get_init_creds_opt_set_anonymous(opt, b ? 1 : 0);
+        }
+        if (getBoolOption(h, "change_password_prompt", b)) {
+            krb5_get_init_creds_opt_set_change_password_prompt(opt, b ? 1 : 0);
+        }
+
+        QoreValue v;
+        if (hasOption(h, "pac_request", v)) {
+            krb5_error_code rc = krb5_get_init_creds_opt_set_pac_request(ctx, opt, v.getAsBool() ? 1 : 0);
+            if (rc) {
+                krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR", "setting PAC request option");
+                return;
+            }
+        }
+        if (hasOption(h, "fast_required", v) && v.getAsBool()) {
+            krb5_error_code rc = krb5_get_init_creds_opt_set_fast_flags(ctx, opt, KRB5_FAST_REQUIRED);
+            if (rc) {
+                krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR", "setting FAST required option");
+                return;
+            }
+        }
+
+        std::string ccache_name;
+        if (getStringOption(h, "fast_ccache_name", ccache_name, xsink)) {
+            if (addCcacheOption(ctx, "fast_ccache_name", ccache_name.c_str(), QSEC_READ, xsink)) {
+                return;
+            }
+        }
+        if (*xsink) {
+            return;
+        }
+        ccache_name.clear();
+        if (getStringOption(h, "in_ccache_name", ccache_name, xsink)) {
+            if (addCcacheOption(ctx, "in_ccache_name", ccache_name.c_str(), QSEC_READ, xsink)) {
+                return;
+            }
+        }
+        if (*xsink) {
+            return;
+        }
+        ccache_name.clear();
+        if (getStringOption(h, "out_ccache_name", ccache_name, xsink)) {
+            if (addCcacheOption(ctx, "out_ccache_name", ccache_name.c_str(), QSEC_WRITE | QSEC_CREATE, xsink)) {
+                return;
+            }
+        }
+        if (*xsink) {
+            return;
+        }
+
+        if (hasOption(h, "enctypes", v)) {
+            const QoreListNode* l = v.get<const QoreListNode>();
+            if (!l || l->empty()) {
+                xsink->raiseException("KRB5-INIT-CREDS-ERROR", "option 'enctypes' cannot be empty");
+                return;
+            }
+            enctypes.reserve(l->size());
+            for (size_t i = 0; i < l->size(); ++i) {
+                int64 etype = l->retrieveEntry(i).getAsBigInt();
+                if (etype <= 0 || etype > INT32_MAX) {
+                    xsink->raiseException("KRB5-INIT-CREDS-ERROR",
+                        "option 'enctypes' has invalid enctype value at index %d", (int)i);
+                    return;
+                }
+                enctypes.push_back((krb5_enctype)etype);
+            }
+
+            krb5_get_init_creds_opt_set_etype_list(opt, enctypes.data(), enctypes.size());
+        }
+    }
+};
+
+QoreKrb5Credentials* QoreKrb5Context::acquireCredentialsWithPassword(const QoreKrb5Principal& principal,
+        const char* password, const QoreHashNode* opts_hash, ExceptionSink* xsink) const {
+    if (!password || !*password) {
+        xsink->raiseException("KRB5-INIT-CREDS-ERROR", "password cannot be empty");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "acquiring initial credentials with password")) {
+        return nullptr;
+    }
+
+    QoreKrb5InitCredsOptions opts(ctx, opts_hash, xsink);
+    if (*xsink) {
+        opts.cleanup(ctx);
+        return nullptr;
+    }
+
+    krb5_creds creds;
+    memset(&creds, 0, sizeof(creds));
+    krb5_error_code rc = krb5_get_init_creds_password(ctx, &creds, principal.principal,
+        const_cast<char*>(password), nullptr, nullptr, opts.start_time, opts.serviceName(), opts.opt);
+    opts.cleanup(ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR",
+            "acquiring initial credentials with password");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(ctx, creds, xsink));
+    krb5_free_cred_contents(ctx, &creds);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreKrb5Credentials* QoreKrb5Context::acquireCredentialsWithKeytab(const QoreKrb5Principal& principal,
+        const QoreKrb5Keytab& keytab, const QoreHashNode* opts_hash, ExceptionSink* xsink) const {
+    if (!krb5_check_keytab_access(keytab.ctx, keytab.keytab, QSEC_READ, xsink,
+            "acquiring initial credentials with keytab")) {
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "acquiring initial credentials with keytab")) {
+        return nullptr;
+    }
+
+    QoreKrb5InitCredsOptions opts(ctx, opts_hash, xsink);
+    if (*xsink) {
+        opts.cleanup(ctx);
+        return nullptr;
+    }
+
+    krb5_creds creds;
+    memset(&creds, 0, sizeof(creds));
+    krb5_error_code rc = krb5_get_init_creds_keytab(ctx, &creds, principal.principal, keytab.keytab,
+        opts.start_time, opts.serviceName(), opts.opt);
+    opts.cleanup(ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-INIT-CREDS-ERROR",
+            "acquiring initial credentials with keytab");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(ctx, creds, xsink));
+    krb5_free_cred_contents(ctx, &creds);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
 QoreKrb5Keytab::QoreKrb5Keytab(const char* keytab_name, bool use_default, ExceptionSink* xsink) {
     krb5_error_code rc = krb5_init_context(&ctx);
     if (rc) {
@@ -1054,10 +1369,18 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("GSS_SEQUENCE_FLAG", (int64)GSS_C_SEQUENCE_FLAG);
     krb5ns.addConstant("GSS_INTEG_FLAG", (int64)GSS_C_INTEG_FLAG);
     krb5ns.addConstant("GSS_CONF_FLAG", (int64)GSS_C_CONF_FLAG);
+    krb5ns.addConstant("ENCTYPE_AES128_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES128_CTS_HMAC_SHA1_96);
     krb5ns.addConstant("ENCTYPE_AES256_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+#ifdef ENCTYPE_AES128_CTS_HMAC_SHA256_128
+    krb5ns.addConstant("ENCTYPE_AES128_CTS_HMAC_SHA256_128", (int64)ENCTYPE_AES128_CTS_HMAC_SHA256_128);
+#endif
+#ifdef ENCTYPE_AES256_CTS_HMAC_SHA384_192
+    krb5ns.addConstant("ENCTYPE_AES256_CTS_HMAC_SHA384_192", (int64)ENCTYPE_AES256_CTS_HMAC_SHA384_192);
+#endif
 
     hashdeclKrb5KeytabEntryInfo = init_hashdecl_Krb5KeytabEntryInfo(krb5ns);
     hashdeclKrb5CredentialsInfo = init_hashdecl_Krb5CredentialsInfo(krb5ns);
+    hashdeclKrb5InitialCredentialsOptions = init_hashdecl_Krb5InitialCredentialsOptions(krb5ns);
 
     krb5ns.addSystemClass(initKrb5PrincipalClass(krb5ns));
     krb5ns.addSystemClass(initKrb5CredentialsClass(krb5ns));

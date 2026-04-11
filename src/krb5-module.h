@@ -52,6 +52,7 @@ DLLLOCAL QoreClass* initGssClientContextClass(QoreNamespace& ns);
 
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5KeytabEntryInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5CredentialsInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_Krb5InitialCredentialsOptions(QoreNamespace& ns);
 
 extern QoreClass* QC_KRB5CONTEXT;
 extern qore_classid_t CID_KRB5CONTEXT;
@@ -68,6 +69,7 @@ extern qore_classid_t CID_GSSCLIENTCONTEXT;
 
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5KeytabEntryInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5CredentialsInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclKrb5InitialCredentialsOptions;
 
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);
@@ -84,6 +86,7 @@ public:
     krb5_principal principal = nullptr;
 
     DLLLOCAL explicit QoreKrb5Principal(const char* p, ExceptionSink* xsink);
+    DLLLOCAL QoreKrb5Principal(const char* p, krb5_flags parse_flags, ExceptionSink* xsink);
     DLLLOCAL QoreKrb5Principal(krb5_context source_ctx, krb5_principal source_principal, ExceptionSink* xsink);
     DLLLOCAL QoreKrb5Principal(const QoreKrb5Principal& other, ExceptionSink* xsink);
     DLLLOCAL ~QoreKrb5Principal() override;
@@ -163,6 +166,10 @@ public:
     DLLLOCAL class QoreKrb5Keytab* openDefaultKeytab(ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5CredentialCache* createMemoryCredentialCache(const QoreKrb5Principal& principal,
         const char* cache_name, ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Credentials* acquireCredentialsWithPassword(const QoreKrb5Principal& principal,
+        const char* password, const QoreHashNode* opts, ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Credentials* acquireCredentialsWithKeytab(const QoreKrb5Principal& principal,
+        const QoreKrb5Keytab& keytab, const QoreHashNode* opts, ExceptionSink* xsink) const;
 };
 
 class QoreKrb5Keytab : public AbstractPrivateData {

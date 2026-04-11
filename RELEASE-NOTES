@@ -2,10 +2,11 @@
 -----
 - initial module scaffold
 - added `Krb5Context` and `Krb5CredentialCache` for default cache discovery and memory-cache setup
+- added password and keytab initial credential acquisition with canonicalization, PAC, enctype, FAST, and ccache options
 - added `Krb5Credentials` for credential metadata and credential-cache store/list operations
 - added filesystem sandbox enforcement and allow/deny tests for file-backed credential caches
 - added `Krb5Keytab` for default keytab discovery and deterministic keytab entry management
 - added filesystem sandbox enforcement and allow/deny tests for file-backed keytabs
-- added `Krb5Principal` for Kerberos principal parsing and introspection
+- added `Krb5Principal` for Kerberos principal parsing, enterprise principal parsing, and introspection
 - added `GssClientContext` for initiator-side GSSAPI target setup and token stepping
 - added initial documentation, examples, and tests

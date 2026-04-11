@@ -9,6 +9,9 @@
 Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
 printf("%s\n", p.toString());
 printf("%s\n", p.getRealm());
+
+Krb5Principal upn = Krb5Principal::parseEnterprise("alice@example.com@EXAMPLE.COM");
+printf("enterprise component: %s\n", upn.getComponent(0));
     @endcode
 
     @section krb5examples_gss GSSAPI Initiator Context
@@ -60,6 +63,66 @@ cc.storeCredentials(creds);
 for (hash<Qore::Krb5::Krb5CredentialsInfo> info in cc.listCredentials()) {
     printf("%s -> %s until %d\n", info.client, info.server, info.end_time);
 }
+    @endcode
+
+    @section krb5examples_initial_creds Initial Credentials for Active Directory
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal user = Qore::Krb5::Krb5Principal::parseEnterprise(
+    "alice@example.com@EXAMPLE.COM");
+
+hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+opts.canonicalize = True;
+opts.pac_request = True;
+opts.forwardable = True;
+opts.enctypes = (Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96,);
+
+Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(
+    user, ENV.KRB5_TEST_PASSWORD, opts);
+
+auto cc = ctx.createMemoryCredentialCache(user, "module-krb5-ad-example");
+cc.storeCredentials(creds);
+    @endcode
+
+    @section krb5examples_initial_creds_fast Initial Credentials with FAST
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal user = Qore::Krb5::Krb5Principal::parseEnterprise(
+    "alice@example.com@EXAMPLE.COM");
+
+hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+opts.canonicalize = True;
+opts.pac_request = True;
+opts.fast_ccache_name = "FILE:/run/qorus/krb5cc_armor";
+opts.fast_required = True;
+
+Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(
+    user, ENV.KRB5_TEST_PASSWORD, opts);
+    @endcode
+
+    @section krb5examples_initial_keytab Initial Credentials from Keytab
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal service("HTTP/qorus.example.com@EXAMPLE.COM");
+Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:/etc/qorus/qorus.keytab");
+
+hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+opts.canonicalize = True;
+opts.pac_request = True;
+
+Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithKeytab(service, kt, opts);
     @endcode
 
     @section krb5examples_sandbox Sandbox-Protected File Credential Cache
