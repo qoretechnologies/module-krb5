@@ -213,6 +213,7 @@ for (hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in kt.listEntries()) {
 hash<Qore::Krb5::GssClientContextOptions> opts();
 opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG;
 opts.mechanism = "kerberos";
+opts.name_type = "krb5-principal";
 
 Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
 
@@ -247,6 +248,7 @@ Qore::Krb5::GssCredential cred = Qore::Krb5::GssCredential::fromKeytab(kt, servi
 hash<Qore::Krb5::GssClientContextOptions> opts();
 opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG;
 opts.mechanism = "kerberos";
+opts.name_type = "krb5-principal";
 
 Qore::Krb5::GssClientContext gss(
     "LDAP/ad.example.com@EXAMPLE.COM", cred, opts);
@@ -275,6 +277,7 @@ Qore::Krb5::GssCredential cred = Qore::Krb5::GssCredential::fromKeytab(kt);
 hash<Qore::Krb5::GssClientContextOptions> opts();
 opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CHANNEL_BOUND_FLAG;
 opts.mechanism = "kerberos";
+opts.name_type = "krb5-principal";
 # "tls-server-end-point:" || <cert-hash-bytes>, hex-encoded
 opts.channel_binding_application_data_hex =
     "746c732d7365727665722d656e642d706f696e743a" + compute_tls_endpoint_hash_hex();

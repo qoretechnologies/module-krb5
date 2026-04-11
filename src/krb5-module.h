@@ -38,6 +38,7 @@
 #include <krb5.h>
 
 #include <string>
+#include <cstring>
 #include <vector>
 
 DLLLOCAL int krb5_raise_exception(ExceptionSink* xsink, krb5_context ctx, krb5_error_code rc,
@@ -120,6 +121,7 @@ public:
     gss_name_t target_name = GSS_C_NO_NAME;
     class QoreGssCredential* cred_ref = nullptr;
     gss_OID mech = GSS_C_NO_OID;
+    gss_OID name_type = GSS_KRB5_NT_PRINCIPAL_NAME;
     OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
     OM_uint32 lifetime_req = 0;
     gss_channel_bindings_struct channel_bindings;

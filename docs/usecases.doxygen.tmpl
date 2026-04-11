@@ -61,6 +61,11 @@
     acquire a credential (from cache or keytab), construct a
     @ref Qore::Krb5::GssClientContext bound to the target service principal,
     and drive the step loop exchanging hex-encoded tokens with the peer.
+    The default target-name type is a Kerberos principal such as
+    \c "HTTP/qorus.example.com@EXAMPLE.COM"; set
+    @ref Qore::Krb5::GssClientContextOptions::name_type to
+    \c "hostbased-service" when a peer API expects the portable GSSAPI
+    host-based form such as \c "HTTP@qorus.example.com".
 
     @section krb5uc_identity Passwordless Service Identity
 

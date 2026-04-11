@@ -17,6 +17,8 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testUtilityParseHostBasedServicePrincipalRejectsMalformed());
         addTestCase("utility tls-server-end-point channel binding builder",
             \testUtilityBuildTlsServerEndPointChannelBindingHex());
+        addTestCase("utility tls-server-end-point channel binding validation",
+            \testUtilityBuildTlsServerEndPointChannelBindingHexValidation());
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
         addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
@@ -47,6 +49,7 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("initial credentials FAST cache sandbox deny", \testInitialCredentialsFastCacheSandboxDeny());
         addTestCase("gss target setup", \testGssTargetSetup());
         addTestCase("gss context options", \testGssContextOptions());
+        addTestCase("gss context name type options", \testGssContextNameTypeOptions());
         addTestCase("gss context channel binding options", \testGssContextChannelBindingOptions());
         addTestCase("gss context invalid options", \testGssContextInvalidOptions());
         addTestCase("gss credential from keytab", \testGssCredentialFromKeytab());
@@ -153,6 +156,18 @@ public class Krb5ModuleTest inherits QUnit::Test {
         opts.channel_binding_application_data_hex = cb;
         Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
         assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+    }
+
+    private testUtilityBuildTlsServerEndPointChannelBindingHexValidation() {
+        assertThrows("KRB5-CHANNEL-BINDING-ERROR", sub() {
+            Krb5Util::buildTlsServerEndPointChannelBindingHex("");
+        });
+        assertThrows("KRB5-CHANNEL-BINDING-ERROR", sub() {
+            Krb5Util::buildTlsServerEndPointChannelBindingHex("abc");
+        });
+        assertThrows("KRB5-CHANNEL-BINDING-ERROR", sub() {
+            Krb5Util::buildTlsServerEndPointChannelBindingHex("zz");
+        });
     }
 
     private testContextDefaults() {
@@ -605,6 +620,21 @@ public class Krb5ModuleTest inherits QUnit::Test {
         assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx2.getTargetName());
     }
 
+    private testGssContextNameTypeOptions() {
+        hash<Qore::Krb5::GssClientContextOptions> opts();
+        opts.name_type = "krb5-principal";
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+
+        opts.name_type = "hostbased-service";
+        Qore::Krb5::GssClientContext hostbased("HTTP@qorus.example.com", opts);
+        assertEq("HTTP@qorus.example.com", hostbased.getTargetName());
+
+        opts.name_type = "default";
+        Qore::Krb5::GssClientContext default_name("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", default_name.getTargetName());
+    }
+
     private testGssContextChannelBindingOptions() {
         hash<Qore::Krb5::GssClientContextOptions> opts();
         opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CHANNEL_BOUND_FLAG;
@@ -628,6 +658,16 @@ public class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-GSS-ARG-ERROR", sub() {
             hash<Qore::Krb5::GssClientContextOptions> opts();
             opts.mechanism = "ntlm";
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.name_type = "";
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.name_type = "spnego";
             Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
         });
         assertThrows("KRB5-GSS-ARG-ERROR", sub() {

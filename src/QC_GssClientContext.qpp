@@ -47,6 +47,9 @@ hashdecl Qore::Krb5::GssClientContextOptions {
     //! Mechanism selector; supported values are \c "kerberos" and \c "default"
     *string mechanism;
 
+    //! GSSAPI target-name type; supported values are \c "krb5-principal", \c "hostbased-service", and \c "default"
+    *string name_type;
+
     //! Optional channel-binding initiator address type; defaults to \c GSS_AF_NULLADDR
     *int channel_binding_initiator_addrtype;
 
@@ -106,7 +109,7 @@ hashdecl Qore::Krb5::GssUnwrapInfo {
 }
 
 //! Creates an initiator-side GSSAPI context for the given service principal
-/** @param service_principal a host-based service principal such as
+/** @param service_principal a Kerberos service principal such as
     \c "HTTP/qorus.example.com@EXAMPLE.COM"
 
     @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty
@@ -121,8 +124,9 @@ GssClientContext::constructor(string service_principal) {
 }
 
 //! Creates an initiator-side GSSAPI context with explicit options
-/** @param service_principal a host-based service principal
-    @param opts initiator options (flags, lifetime, mechanism, channel bindings)
+/** @param service_principal a Kerberos service principal, or a host-based service name
+    if \c opts.name_type is \c "hostbased-service"
+    @param opts initiator options (flags, lifetime, mechanism, name type, channel bindings)
 
     @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty or an
     option value is invalid or inconsistent
@@ -138,7 +142,8 @@ GssClientContext::constructor(string service_principal, hash<GssClientContextOpt
 }
 
 //! Creates an initiator-side GSSAPI context bound to explicit credentials
-/** @param service_principal a host-based service principal
+/** @param service_principal a Kerberos service principal such as
+    \c "HTTP/qorus.example.com@EXAMPLE.COM"
     @param cred explicit GSSAPI credential
 
     @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty
@@ -154,9 +159,10 @@ GssClientContext::constructor(string service_principal, GssCredential[QoreGssCre
 }
 
 //! Creates an initiator-side GSSAPI context bound to explicit credentials and options
-/** @param service_principal a host-based service principal
+/** @param service_principal a Kerberos service principal, or a host-based service name
+    if \c opts.name_type is \c "hostbased-service"
     @param cred explicit GSSAPI credential
-    @param opts initiator options (flags, lifetime, mechanism, channel bindings)
+    @param opts initiator options (flags, lifetime, mechanism, name type, channel bindings)
 
     @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty or an
     option value is invalid or inconsistent

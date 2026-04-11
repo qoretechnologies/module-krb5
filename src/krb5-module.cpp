@@ -193,6 +193,85 @@ public:
     GssBufferHolder& operator=(const GssBufferHolder&) = delete;
 };
 
+class SecureBytes : public std::vector<unsigned char> {
+public:
+    DLLLOCAL ~SecureBytes() {
+        if (!empty()) {
+            // Avoid leaving decoded key material in heap memory after transfer to krb5 structures.
+            volatile unsigned char* p = data();
+            for (size_t i = 0; i < size(); ++i) {
+                p[i] = 0;
+            }
+        }
+    }
+
+    SecureBytes(const SecureBytes&) = delete;
+    SecureBytes& operator=(const SecureBytes&) = delete;
+    SecureBytes() = default;
+};
+
+class Krb5CredentialCacheCursorHolder {
+public:
+    krb5_context ctx = nullptr;
+    krb5_ccache cache = nullptr;
+    krb5_cc_cursor cursor = nullptr;
+    bool active = false;
+
+    DLLLOCAL Krb5CredentialCacheCursorHolder(krb5_context ctx, krb5_ccache cache) : ctx(ctx), cache(cache) {
+    }
+
+    DLLLOCAL ~Krb5CredentialCacheCursorHolder() {
+        close();
+    }
+
+    DLLLOCAL krb5_error_code start() {
+        krb5_error_code rc = krb5_cc_start_seq_get(ctx, cache, &cursor);
+        active = !rc;
+        return rc;
+    }
+
+    DLLLOCAL void close() {
+        if (active) {
+            krb5_cc_end_seq_get(ctx, cache, &cursor);
+            active = false;
+        }
+    }
+
+    Krb5CredentialCacheCursorHolder(const Krb5CredentialCacheCursorHolder&) = delete;
+    Krb5CredentialCacheCursorHolder& operator=(const Krb5CredentialCacheCursorHolder&) = delete;
+};
+
+class Krb5KeytabCursorHolder {
+public:
+    krb5_context ctx = nullptr;
+    krb5_keytab keytab = nullptr;
+    krb5_kt_cursor cursor = nullptr;
+    bool active = false;
+
+    DLLLOCAL Krb5KeytabCursorHolder(krb5_context ctx, krb5_keytab keytab) : ctx(ctx), keytab(keytab) {
+    }
+
+    DLLLOCAL ~Krb5KeytabCursorHolder() {
+        close();
+    }
+
+    DLLLOCAL krb5_error_code start() {
+        krb5_error_code rc = krb5_kt_start_seq_get(ctx, keytab, &cursor);
+        active = !rc;
+        return rc;
+    }
+
+    DLLLOCAL void close() {
+        if (active) {
+            krb5_kt_end_seq_get(ctx, keytab, &cursor);
+            active = false;
+        }
+    }
+
+    Krb5KeytabCursorHolder(const Krb5KeytabCursorHolder&) = delete;
+    Krb5KeytabCursorHolder& operator=(const Krb5KeytabCursorHolder&) = delete;
+};
+
 DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc) {
     return rc == KRB5_FCC_NOFILE || rc == KRB5_CC_NOTFOUND || rc == KRB5_CC_END;
 }
@@ -385,6 +464,7 @@ public:
     OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
     OM_uint32 lifetime_req = 0;
     gss_OID mech = gss_mech_krb5;
+    gss_OID name_type = GSS_KRB5_NT_PRINCIPAL_NAME;
     OM_uint32 initiator_addrtype = GSS_C_AF_NULLADDR;
     OM_uint32 acceptor_addrtype = GSS_C_AF_NULLADDR;
     std::vector<unsigned char> initiator_address;
@@ -436,6 +516,30 @@ public:
                 xsink->raiseException("KRB5-GSS-ARG-ERROR",
                     "unsupported GSSAPI mechanism '%s'; supported values are 'kerberos' and 'default'",
                     mechanism->c_str());
+                return;
+            }
+        }
+
+        v = opts->getKeyValue("name_type");
+        if (!v.isNullOrNothing()) {
+            QoreStringValueHelper nt(v, QCS_UTF8, xsink);
+            if (*xsink) {
+                return;
+            }
+            if (!nt->c_str() || !*nt->c_str()) {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR", "option 'name_type' cannot be empty");
+                return;
+            }
+            if (!strcasecmp(nt->c_str(), "krb5-principal")) {
+                name_type = GSS_KRB5_NT_PRINCIPAL_NAME;
+            } else if (!strcasecmp(nt->c_str(), "hostbased-service")) {
+                name_type = GSS_C_NT_HOSTBASED_SERVICE;
+            } else if (!strcasecmp(nt->c_str(), "default")) {
+                name_type = GSS_C_NO_OID;
+            } else {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR",
+                    "unsupported GSSAPI name type '%s'; supported values are 'krb5-principal', "
+                    "'hostbased-service', and 'default'", nt->c_str());
                 return;
             }
         }
@@ -530,6 +634,7 @@ QoreGssClientContext::QoreGssClientContext(const char* service_principal, QoreGs
     req_flags = parsed_opts.req_flags;
     lifetime_req = parsed_opts.lifetime_req;
     mech = parsed_opts.mech;
+    name_type = parsed_opts.name_type;
     memset(&channel_bindings, 0, sizeof(channel_bindings));
     if (parsed_opts.has_channel_bindings) {
         has_channel_bindings = true;
@@ -553,7 +658,7 @@ QoreGssClientContext::QoreGssClientContext(const char* service_principal, QoreGs
     gss_buffer_desc namebuf;
     namebuf.length = strlen(service_principal);
     namebuf.value = const_cast<char*>(service_principal);
-    OM_uint32 maj = gss_import_name(&min_stat, &namebuf, GSS_C_NT_HOSTBASED_SERVICE, &target_name);
+    OM_uint32 maj = gss_import_name(&min_stat, &namebuf, name_type, &target_name);
     if (maj != GSS_S_COMPLETE) {
         gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "importing GSSAPI target name");
         return;
@@ -935,10 +1040,9 @@ QoreListNode* QoreKrb5CredentialCache::listCredentials(ExceptionSink* xsink) con
     }
 
     ReferenceHolder<QoreListNode> rv(new QoreListNode(hashdeclKrb5CredentialsInfo->getTypeInfo()), xsink);
-    krb5_cc_cursor cursor;
-    memset(&cursor, 0, sizeof(cursor));
+    Krb5CredentialCacheCursorHolder cursor(ctx, cache);
 
-    krb5_error_code rc = krb5_cc_start_seq_get(ctx, cache, &cursor);
+    krb5_error_code rc = cursor.start();
     if (rc) {
         if (krb5_is_empty_cache_error(rc)) {
             return rv.release();
@@ -948,14 +1052,17 @@ QoreListNode* QoreKrb5CredentialCache::listCredentials(ExceptionSink* xsink) con
     }
 
     while (true) {
+        if (qore_check_cancel(xsink, "listing credential cache")) {
+            return nullptr;
+        }
+
         krb5_creds creds;
         memset(&creds, 0, sizeof(creds));
-        rc = krb5_cc_next_cred(ctx, cache, &cursor, &creds);
+        rc = krb5_cc_next_cred(ctx, cache, &cursor.cursor, &creds);
         if (krb5_is_empty_cache_error(rc)) {
             break;
         }
         if (rc) {
-            krb5_cc_end_seq_get(ctx, cache, &cursor);
             krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "enumerating credential cache");
             return nullptr;
         }
@@ -963,24 +1070,21 @@ QoreListNode* QoreKrb5CredentialCache::listCredentials(ExceptionSink* xsink) con
         SimpleRefHolder<QoreKrb5Credentials> c(new QoreKrb5Credentials(ctx, creds, xsink));
         krb5_free_cred_contents(ctx, &creds);
         if (*xsink) {
-            krb5_cc_end_seq_get(ctx, cache, &cursor);
             return nullptr;
         }
 
         ReferenceHolder<QoreHashNode> info(c->getInfo(xsink), xsink);
         if (*xsink) {
-            krb5_cc_end_seq_get(ctx, cache, &cursor);
             return nullptr;
         }
 
         rv->push(info.release(), xsink);
         if (*xsink) {
-            krb5_cc_end_seq_get(ctx, cache, &cursor);
             return nullptr;
         }
     }
 
-    krb5_cc_end_seq_get(ctx, cache, &cursor);
+    cursor.close();
     return rv.release();
 }
 
@@ -1032,7 +1136,7 @@ QoreKrb5Credentials::QoreKrb5Credentials(const QoreKrb5Principal& client, const 
         return;
     }
 
-    std::vector<unsigned char> key_data;
+    SecureBytes key_data;
     if (!decode_hex(session_key_hex, key_data, xsink, "KRB5-CREDENTIALS-ERROR", "decoding session key")) {
         return;
     }
@@ -1615,7 +1719,7 @@ int QoreKrb5Keytab::addEntry(const QoreKrb5Principal& principal, const char* key
         return -1;
     }
 
-    std::vector<unsigned char> key_data;
+    SecureBytes key_data;
     if (!decode_hex(key_hex, key_data, xsink, "KRB5-KEYTAB-ERROR", "adding keytab entry")) {
         return -1;
     }
@@ -1690,24 +1794,26 @@ QoreListNode* QoreKrb5Keytab::listEntries(ExceptionSink* xsink) const {
     }
 
     ReferenceHolder<QoreListNode> rv(new QoreListNode(hashdeclKrb5KeytabEntryInfo->getTypeInfo()), xsink);
-    krb5_kt_cursor cursor;
-    memset(&cursor, 0, sizeof(cursor));
+    Krb5KeytabCursorHolder cursor(ctx, keytab);
 
-    krb5_error_code rc = krb5_kt_start_seq_get(ctx, keytab, &cursor);
+    krb5_error_code rc = cursor.start();
     if (rc) {
         krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "starting keytab enumeration");
         return nullptr;
     }
 
     while (true) {
+        if (qore_check_cancel(xsink, "listing keytab entries")) {
+            return nullptr;
+        }
+
         krb5_keytab_entry entry;
         memset(&entry, 0, sizeof(entry));
-        rc = krb5_kt_next_entry(ctx, keytab, &entry, &cursor);
+        rc = krb5_kt_next_entry(ctx, keytab, &entry, &cursor.cursor);
         if (rc == KRB5_KT_END) {
             break;
         }
         if (rc) {
-            krb5_kt_end_seq_get(ctx, keytab, &cursor);
             krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "enumerating keytab entries");
             return nullptr;
         }
@@ -1715,18 +1821,16 @@ QoreListNode* QoreKrb5Keytab::listEntries(ExceptionSink* xsink) const {
         ReferenceHolder<QoreHashNode> info(krb5_keytab_entry_to_hash(ctx, entry, xsink), xsink);
         krb5_free_keytab_entry_contents(ctx, &entry);
         if (*xsink) {
-            krb5_kt_end_seq_get(ctx, keytab, &cursor);
             return nullptr;
         }
 
         rv->push(info.release(), xsink);
         if (*xsink) {
-            krb5_kt_end_seq_get(ctx, keytab, &cursor);
             return nullptr;
         }
     }
 
-    krb5_kt_end_seq_get(ctx, keytab, &cursor);
+    cursor.close();
     return rv.release();
 }
 

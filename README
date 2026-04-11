@@ -25,7 +25,7 @@ The module provides:
   client keytabs, so GSSAPI code does not need to rely on process-global
   default credentials
 - Initiator-side GSSAPI security contexts with configurable flags, lifetime,
-  and mechanism selection
+  mechanism selection, and explicit target-name type selection
 - GSSAPI channel bindings, including RFC 5929 `tls-server-end-point`
   application data for hardened SASL/GSSAPI deployments
 - GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity

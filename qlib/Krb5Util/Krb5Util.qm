@@ -170,8 +170,21 @@ Qore::Krb5::GssClientContext ctx("LDAP/ad.example.com@EXAMPLE.COM", opts);
 
         @return a hex-encoded string that is the concatenation of the ASCII
         prefix \c "tls-server-end-point:" and \a server_cert_hash_hex
+
+        @throw KRB5-CHANNEL-BINDING-ERROR if \a server_cert_hash_hex is
+        empty or is not valid hexadecimal
     */
     public string sub buildTlsServerEndPointChannelBindingHex(string server_cert_hash_hex) {
+        if (!server_cert_hash_hex) {
+            throw "KRB5-CHANNEL-BINDING-ERROR", "certificate hash hex cannot be empty";
+        }
+        if (server_cert_hash_hex.size() % 2) {
+            throw "KRB5-CHANNEL-BINDING-ERROR", "certificate hash hex must have even length";
+        }
+        if (server_cert_hash_hex !~ /^[[:xdigit:]]+$/) {
+            throw "KRB5-CHANNEL-BINDING-ERROR", "certificate hash contains non-hexadecimal characters";
+        }
+
         # "tls-server-end-point:" in hex
         return "746c732d7365727665722d656e642d706f696e743a" + server_cert_hash_hex;
     }

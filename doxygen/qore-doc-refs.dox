@@ -11,4 +11,6 @@
 namespace Qore {
 //! Parse option restriction that denies filesystem access.
 int PO_NO_FILESYSTEM;
+//! Parse option restriction that denies network access.
+int PO_NO_NETWORK;
 }
