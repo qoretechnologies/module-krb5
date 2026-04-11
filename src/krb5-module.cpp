@@ -28,6 +28,7 @@
 #include "krb5-module.h"
 #include "QC_GssClientContext.h"
 #include "QC_Krb5Context.h"
+#include "QC_Krb5Credentials.h"
 #include "QC_Krb5CredentialCache.h"
 #include "QC_Krb5Keytab.h"
 #include "QC_Krb5Principal.h"
@@ -35,11 +36,13 @@
 #include <qore/QoreSandboxManager.h>
 
 #include <cctype>
+#include <cstdlib>
 #include <ctime>
 
 static QoreNamespace krb5ns("Qore::Krb5");
 
 TypedHashDecl* hashdeclKrb5KeytabEntryInfo = nullptr;
+TypedHashDecl* hashdeclKrb5CredentialsInfo = nullptr;
 
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
 static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
@@ -536,6 +539,222 @@ QoreKrb5Principal* QoreKrb5CredentialCache::getPrimaryPrincipal(ExceptionSink* x
     return rv.release();
 }
 
+int QoreKrb5CredentialCache::storeCredentials(const QoreKrb5Credentials& c, ExceptionSink* xsink) {
+    if (!krb5_check_cache_access(ctx, cache, QSEC_WRITE | QSEC_CREATE, xsink, "storing credentials")) {
+        return -1;
+    }
+
+    krb5_error_code rc = krb5_cc_store_cred(ctx, cache, c.creds);
+    if (rc) {
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "storing credentials");
+    }
+    return 0;
+}
+
+QoreListNode* QoreKrb5CredentialCache::listCredentials(ExceptionSink* xsink) const {
+    if (!krb5_check_cache_access(ctx, cache, QSEC_READ, xsink, "listing credentials")) {
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreListNode> rv(new QoreListNode(hashdeclKrb5CredentialsInfo->getTypeInfo()), xsink);
+    krb5_cc_cursor cursor;
+    memset(&cursor, 0, sizeof(cursor));
+
+    krb5_error_code rc = krb5_cc_start_seq_get(ctx, cache, &cursor);
+    if (rc) {
+        if (krb5_is_empty_cache_error(rc)) {
+            return rv.release();
+        }
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "starting credential cache enumeration");
+        return nullptr;
+    }
+
+    while (true) {
+        krb5_creds creds;
+        memset(&creds, 0, sizeof(creds));
+        rc = krb5_cc_next_cred(ctx, cache, &cursor, &creds);
+        if (krb5_is_empty_cache_error(rc)) {
+            break;
+        }
+        if (rc) {
+            krb5_cc_end_seq_get(ctx, cache, &cursor);
+            krb5_raise_exception(xsink, ctx, rc, "KRB5-CACHE-ERROR", "enumerating credential cache");
+            return nullptr;
+        }
+
+        SimpleRefHolder<QoreKrb5Credentials> c(new QoreKrb5Credentials(ctx, creds, xsink));
+        krb5_free_cred_contents(ctx, &creds);
+        if (*xsink) {
+            krb5_cc_end_seq_get(ctx, cache, &cursor);
+            return nullptr;
+        }
+
+        ReferenceHolder<QoreHashNode> info(c->getInfo(xsink), xsink);
+        if (*xsink) {
+            krb5_cc_end_seq_get(ctx, cache, &cursor);
+            return nullptr;
+        }
+
+        rv->push(info.release(), xsink);
+        if (*xsink) {
+            krb5_cc_end_seq_get(ctx, cache, &cursor);
+            return nullptr;
+        }
+    }
+
+    krb5_cc_end_seq_get(ctx, cache, &cursor);
+    return rv.release();
+}
+
+static int krb5_set_data_from_hex(krb5_data& data, const char* data_hex, ExceptionSink* xsink, const char* context) {
+    std::vector<unsigned char> bytes;
+    if (!decode_hex(data_hex, bytes, xsink, "KRB5-CREDENTIALS-ERROR", context)) {
+        return -1;
+    }
+    if (bytes.empty()) {
+        xsink->raiseException("KRB5-CREDENTIALS-ERROR", "%s: data cannot be empty", context);
+        return -1;
+    }
+
+    data.data = static_cast<char*>(malloc(bytes.size()));
+    if (!data.data) {
+        xsink->raiseException("KRB5-CREDENTIALS-ERROR", "%s: memory allocation failed", context);
+        return -1;
+    }
+
+    memcpy(data.data, bytes.data(), bytes.size());
+    data.length = bytes.size();
+    return 0;
+}
+
+QoreKrb5Credentials::QoreKrb5Credentials(const QoreKrb5Principal& client, const QoreKrb5Principal& server,
+        const char* session_key_hex, krb5_enctype enctype, krb5_timestamp start_time, krb5_timestamp end_time,
+        krb5_timestamp renew_until, krb5_flags flags, const char* ticket_hex, ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_init_context(&ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, nullptr, rc, "KRB5-INIT-ERROR", "initializing kerberos context");
+        return;
+    }
+
+    creds = static_cast<krb5_creds*>(calloc(1, sizeof(*creds)));
+    if (!creds) {
+        xsink->raiseException("KRB5-CREDENTIALS-ERROR", "memory allocation failed");
+        return;
+    }
+
+    rc = krb5_copy_principal(ctx, client.principal, &creds->client);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CREDENTIALS-ERROR", "copying client principal");
+        return;
+    }
+
+    rc = krb5_copy_principal(ctx, server.principal, &creds->server);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CREDENTIALS-ERROR", "copying server principal");
+        return;
+    }
+
+    std::vector<unsigned char> key_data;
+    if (!decode_hex(session_key_hex, key_data, xsink, "KRB5-CREDENTIALS-ERROR", "decoding session key")) {
+        return;
+    }
+    if (key_data.empty()) {
+        xsink->raiseException("KRB5-CREDENTIALS-ERROR", "session key cannot be empty");
+        return;
+    }
+
+    krb5_keyblock* keyblock = nullptr;
+    rc = krb5_init_keyblock(ctx, enctype, key_data.size(), &keyblock);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-CREDENTIALS-ERROR", "allocating session keyblock");
+        return;
+    }
+
+    memcpy(keyblock->contents, key_data.data(), key_data.size());
+    creds->keyblock = *keyblock;
+    keyblock->contents = nullptr;
+    keyblock->length = 0;
+    krb5_free_keyblock(ctx, keyblock);
+
+    creds->times.starttime = start_time;
+    creds->times.authtime = start_time;
+    creds->times.endtime = end_time;
+    creds->times.renew_till = renew_until;
+    creds->ticket_flags = flags;
+
+    if (krb5_set_data_from_hex(creds->ticket, ticket_hex, xsink, "decoding ticket data")) {
+        return;
+    }
+}
+
+QoreKrb5Credentials::QoreKrb5Credentials(krb5_context source_ctx, const krb5_creds& source_creds,
+        ExceptionSink* xsink) {
+    krb5_error_code rc = krb5_init_context(&ctx);
+    if (rc) {
+        krb5_raise_exception(xsink, nullptr, rc, "KRB5-INIT-ERROR", "initializing kerberos context");
+        return;
+    }
+
+    rc = krb5_copy_creds(source_ctx, &source_creds, &creds);
+    if (rc) {
+        krb5_raise_exception(xsink, source_ctx, rc, "KRB5-CREDENTIALS-ERROR", "copying credentials");
+    }
+}
+
+QoreKrb5Credentials::~QoreKrb5Credentials() {
+    if (creds) {
+        krb5_free_creds(ctx, creds);
+    }
+    if (ctx) {
+        krb5_free_context(ctx);
+    }
+}
+
+QoreHashNode* QoreKrb5Credentials::getInfo(ExceptionSink* xsink) const {
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclKrb5CredentialsInfo, xsink), xsink);
+
+    ReferenceHolder<QoreStringNode> client(
+        krb5_unparse_principal(ctx, creds->client, xsink, "KRB5-CREDENTIALS-ERROR", "rendering client principal"), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreStringNode> server(
+        krb5_unparse_principal(ctx, creds->server, xsink, "KRB5-CREDENTIALS-ERROR", "rendering server principal"), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    char enctype_name[128] = {0};
+    if (krb5_enctype_to_name(creds->keyblock.enctype, false, enctype_name, sizeof(enctype_name))) {
+        snprintf(enctype_name, sizeof(enctype_name), "etype-%d", (int)creds->keyblock.enctype);
+    }
+
+    rv->setKeyValue("client", client.release(), xsink);
+    rv->setKeyValue("server", server.release(), xsink);
+    rv->setKeyValue("enctype", (int64)creds->keyblock.enctype, xsink);
+    rv->setKeyValue("enctype_name", new QoreStringNode(enctype_name), xsink);
+    rv->setKeyValue("start_time", (int64)creds->times.starttime, xsink);
+    rv->setKeyValue("end_time", (int64)creds->times.endtime, xsink);
+    rv->setKeyValue("renew_until", (int64)creds->times.renew_till, xsink);
+    rv->setKeyValue("ticket_flags", (int64)creds->ticket_flags, xsink);
+    rv->setKeyValue("is_skey", (bool)creds->is_skey, xsink);
+    rv->setKeyValue("ticket_size", (int64)creds->ticket.length, xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+
+    return rv.release();
+}
+
+QoreKrb5Principal* QoreKrb5Credentials::getClientPrincipal(ExceptionSink* xsink) const {
+    return new QoreKrb5Principal(ctx, creds->client, xsink);
+}
+
+QoreKrb5Principal* QoreKrb5Credentials::getServerPrincipal(ExceptionSink* xsink) const {
+    return new QoreKrb5Principal(ctx, creds->server, xsink);
+}
+
 QoreKrb5Context::QoreKrb5Context(ExceptionSink* xsink) {
     krb5_error_code rc = krb5_init_context(&ctx);
     if (rc) {
@@ -838,8 +1057,10 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("ENCTYPE_AES256_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES256_CTS_HMAC_SHA1_96);
 
     hashdeclKrb5KeytabEntryInfo = init_hashdecl_Krb5KeytabEntryInfo(krb5ns);
+    hashdeclKrb5CredentialsInfo = init_hashdecl_Krb5CredentialsInfo(krb5ns);
 
     krb5ns.addSystemClass(initKrb5PrincipalClass(krb5ns));
+    krb5ns.addSystemClass(initKrb5CredentialsClass(krb5ns));
     krb5ns.addSystemClass(initKrb5CredentialCacheClass(krb5ns));
     krb5ns.addSystemClass(initKrb5KeytabClass(krb5ns));
     krb5ns.addSystemClass(initKrb5ContextClass(krb5ns));

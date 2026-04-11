@@ -1,0 +1,14 @@
+/** @file qore-doc-refs.dox
+    @brief Local documentation anchors for Qore symbols referenced by generated qpp docs.
+*/
+
+/** @def CONSTANT
+    Code flag indicating that a call can be used in constant expressions.
+*/
+#define CONSTANT
+
+//! Qore namespace
+namespace Qore {
+//! Parse option restriction that denies filesystem access.
+int PO_NO_FILESYSTEM;
+}

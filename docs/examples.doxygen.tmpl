@@ -40,6 +40,28 @@ for (hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in kt.listEntries()) {
 }
     @endcode
 
+    @section krb5examples_credentials Credential Cache Metadata
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+
+Qore::Krb5::Krb5Credentials creds(client, server,
+    "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 3000, 0, "abcd");
+
+Qore::Krb5::Krb5Context ctx();
+auto cc = ctx.createMemoryCredentialCache(client, "module-krb5-example-cache");
+cc.storeCredentials(creds);
+
+for (hash<Qore::Krb5::Krb5CredentialsInfo> info in cc.listCredentials()) {
+    printf("%s -> %s until %d\n", info.client, info.server, info.end_time);
+}
+    @endcode
+
     @section krb5examples_sandbox Sandbox-Protected File Credential Cache
 
     @code{.qore}

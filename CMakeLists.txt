@@ -28,6 +28,7 @@ configure_file(${CMAKE_SOURCE_DIR}/cmake/config.h.cmake
 
 set(QPP_SRC
     src/QC_Krb5Context.qpp
+    src/QC_Krb5Credentials.qpp
     src/QC_Krb5CredentialCache.qpp
     src/QC_Krb5Keytab.qpp
     src/QC_Krb5Principal.qpp
@@ -36,6 +37,11 @@ set(QPP_SRC
 
 set(CPP_SRC
     src/krb5-module.cpp
+)
+
+set(MODULE_DOX_INPUT
+    ${CMAKE_BINARY_DIR}
+    ${CMAKE_SOURCE_DIR}/doxygen
 )
 
 qore_wrap_qpp_value(QPP_SOURCES DOXLIST _dox_src METALIST QPP_META_SRC ${QPP_SRC})

@@ -8,6 +8,12 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
         addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
+        addTestCase("credentials metadata", \testCredentialsMetadata());
+        addTestCase("credentials default optional fields", \testCredentialsDefaultOptionalFields());
+        addTestCase("credentials invalid key hex rejected", \testCredentialsInvalidKeyHexRejected());
+        addTestCase("credentials empty key rejected", \testCredentialsEmptyKeyRejected());
+        addTestCase("credentials invalid ticket hex rejected", \testCredentialsInvalidTicketHexRejected());
+        addTestCase("credential cache store and list", \testCredentialCacheStoreAndList());
         addTestCase("memory credential cache roundtrip", \testMemoryCredentialCacheRoundtrip());
         addTestCase("empty credential cache reports no principal", \testEmptyCredentialCache());
         addTestCase("empty cache name rejected", \testEmptyCacheNameRejected());
@@ -76,6 +82,85 @@ class Krb5ModuleTest inherits QUnit::Test {
         auto kt = ctx.openDefaultKeytab();
         assertFalse(kt.getType() == "");
         assertFalse(kt.getName() == "");
+    }
+
+    private Qore::Krb5::Krb5Credentials createTestCredentials(int kvno = 1) {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Credentials creds(client, server, kvno == 1 ? getTestKeyHex1() : getTestKeyHex2(),
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 3000, 0x40, "abcd");
+        return creds;
+    }
+
+    private testCredentialsMetadata() {
+        Qore::Krb5::Krb5Credentials creds = createTestCredentials();
+        hash<Qore::Krb5::Krb5CredentialsInfo> info = creds.getInfo();
+        assertEq("alice@EXAMPLE.COM", info.client);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", info.server);
+        assertEq(Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, info.enctype);
+        assertFalse(info.enctype_name == "");
+        assertEq(1000, info.start_time);
+        assertEq(2000, info.end_time);
+        assertEq(3000, info.renew_until);
+        assertEq(0x40, info.ticket_flags);
+        assertEq(2, info.ticket_size);
+        assertEq("alice@EXAMPLE.COM", creds.getClientPrincipal().toString());
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", creds.getServerPrincipal().toString());
+    }
+
+    private testCredentialsInvalidKeyHexRejected() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-CREDENTIALS-ERROR", sub() {
+            Qore::Krb5::Krb5Credentials bad(client, server, "xyz",
+                Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 0, 0, "00");
+        });
+    }
+
+    private testCredentialsDefaultOptionalFields() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Credentials creds(client, server, getTestKeyHex1(),
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000);
+        hash<Qore::Krb5::Krb5CredentialsInfo> info = creds.getInfo();
+        assertEq(0, info.renew_until);
+        assertEq(0, info.ticket_flags);
+        assertEq(1, info.ticket_size);
+    }
+
+    private testCredentialsEmptyKeyRejected() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-CREDENTIALS-ERROR", sub() {
+            Qore::Krb5::Krb5Credentials bad(client, server, "",
+                Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000);
+        });
+    }
+
+    private testCredentialsInvalidTicketHexRejected() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-CREDENTIALS-ERROR", sub() {
+            Qore::Krb5::Krb5Credentials bad(client, server, getTestKeyHex1(),
+                Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 0, 0, "abc");
+        });
+    }
+
+    private testCredentialCacheStoreAndList() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Context ctx();
+        auto cc = ctx.createMemoryCredentialCache(client, "module-krb5-credential-list");
+        assertEq(0, cc.listCredentials().size());
+
+        Qore::Krb5::Krb5Credentials creds = createTestCredentials();
+        cc.storeCredentials(creds);
+
+        list<hash<Qore::Krb5::Krb5CredentialsInfo>> entries = cc.listCredentials();
+        assertEq(1, entries.size());
+        assertEq("alice@EXAMPLE.COM", entries[0].client);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", entries[0].server);
+        assertEq(Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, entries[0].enctype);
+        assertEq(2000, entries[0].end_time);
     }
 
     private testMemoryCredentialCacheRoundtrip() {

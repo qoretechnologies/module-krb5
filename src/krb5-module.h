@@ -44,15 +44,19 @@ DLLLOCAL int gss_raise_exception(ExceptionSink* xsink, const char* err, OM_uint3
     const char* context);
 
 DLLLOCAL QoreClass* initKrb5ContextClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initKrb5CredentialsClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5CredentialCacheClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5KeytabClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5PrincipalClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initGssClientContextClass(QoreNamespace& ns);
 
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5KeytabEntryInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_Krb5CredentialsInfo(QoreNamespace& ns);
 
 extern QoreClass* QC_KRB5CONTEXT;
 extern qore_classid_t CID_KRB5CONTEXT;
+extern QoreClass* QC_KRB5CREDENTIALS;
+extern qore_classid_t CID_KRB5CREDENTIALS;
 extern QoreClass* QC_KRB5CREDENTIALCACHE;
 extern qore_classid_t CID_KRB5CREDENTIALCACHE;
 extern QoreClass* QC_KRB5KEYTAB;
@@ -63,6 +67,7 @@ extern QoreClass* QC_GSSCLIENTCONTEXT;
 extern qore_classid_t CID_GSSCLIENTCONTEXT;
 
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5KeytabEntryInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclKrb5CredentialsInfo;
 
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);
@@ -120,8 +125,26 @@ public:
     DLLLOCAL QoreStringNode* getType() const;
     DLLLOCAL QoreStringNode* getFullName(ExceptionSink* xsink) const;
     DLLLOCAL int initialize(const QoreKrb5Principal& principal, ExceptionSink* xsink);
+    DLLLOCAL int storeCredentials(const class QoreKrb5Credentials& creds, ExceptionSink* xsink);
+    DLLLOCAL QoreListNode* listCredentials(ExceptionSink* xsink) const;
     DLLLOCAL bool hasPrimaryPrincipal(ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5Principal* getPrimaryPrincipal(ExceptionSink* xsink) const;
+};
+
+class QoreKrb5Credentials : public AbstractPrivateData {
+public:
+    krb5_context ctx = nullptr;
+    krb5_creds* creds = nullptr;
+
+    DLLLOCAL QoreKrb5Credentials(const QoreKrb5Principal& client, const QoreKrb5Principal& server,
+        const char* session_key_hex, krb5_enctype enctype, krb5_timestamp start_time, krb5_timestamp end_time,
+        krb5_timestamp renew_until, krb5_flags flags, const char* ticket_hex, ExceptionSink* xsink);
+    DLLLOCAL QoreKrb5Credentials(krb5_context source_ctx, const krb5_creds& source_creds, ExceptionSink* xsink);
+    DLLLOCAL ~QoreKrb5Credentials() override;
+
+    DLLLOCAL QoreHashNode* getInfo(ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Principal* getClientPrincipal(ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Principal* getServerPrincipal(ExceptionSink* xsink) const;
 };
 
 class QoreKrb5Context : public AbstractPrivateData {
