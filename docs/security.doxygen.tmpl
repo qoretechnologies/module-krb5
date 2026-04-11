@@ -69,6 +69,26 @@
       explicit keytab-backed @ref Qore::Krb5::GssCredential, avoiding
       process-global acceptor credential selection and exposing the
       authenticated initiator principal after negotiation.
+    - Credential delegation (see @ref krb5sec_delegation) is opt-in: the
+      acceptor only receives a delegated credential when the initiator
+      explicitly sets \c GSS_DELEG_FLAG and the KDC policy allows it.
+
+    @section krb5sec_delegation Credential Delegation
+
+    Credential delegation allows a GSSAPI acceptor to act as the initiator
+    when connecting to further Kerberized services. This is a powerful
+    capability and should only be used when the trust relationship between
+    the initiator and the acceptor is well understood — a compromised
+    acceptor that holds a delegated credential can impersonate the
+    initiator for the lifetime of that credential.
+
+    @ref Qore::Krb5::GssAcceptorContext::getDelegatedCredential() extracts
+    the delegated @ref Qore::Krb5::GssCredential from a completed acceptor
+    context. The credential is transferred out of the GSSAPI layer, so the
+    method can only be called once per context — subsequent calls raise
+    \c KRB5-GSS-DELEGATION-ERROR. If the initiator did not set
+    \c GSS_DELEG_FLAG, or if KDC policy denied delegation, the method also
+    raises \c KRB5-GSS-DELEGATION-ERROR.
 
     @section krb5sec_sandbox Filesystem Sandbox
 
@@ -146,6 +166,19 @@
       that is not complete
     - \c KRB5-TOKEN-ERROR — malformed hex input for a token, wrapped
       message, channel-binding field, or key
+    - \c KRB5-RENEW-ERROR — TGT credential renewal failure (for example
+      the ticket is not renewable, has expired, or the KDC rejected the
+      renewal request)
+    - \c KRB5-SERVICE-CREDS-ERROR — TGS service ticket acquisition failure
+      (for example no valid TGT in the cache, an unreachable KDC, or a
+      service-principal lookup failure)
+    - \c KRB5-GSS-DELEGATION-ERROR — the acceptor attempted to extract a
+      delegated credential but the initiator did not set
+      \c GSS_DELEG_FLAG, KDC policy denied delegation, or the credential
+      has already been extracted
+    - \c KRB5-SPNEGO-ERROR — SPNEGO envelope construction or parsing
+      failure (for example empty input, invalid hex, invalid base64, or a
+      malformed NegTokenResp that does not contain a responseToken field)
     - \c KRB5-SANDBOX-ERROR — a credential-cache or keytab backend is not
       on the sandbox allowlist (see @ref krb5sec_sandbox)
 

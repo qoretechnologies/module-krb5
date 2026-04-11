@@ -158,7 +158,7 @@ hash<GssStepInfo> GssAcceptorContext::step(string token_hex) {
     @throw KRB5-GSS-ERROR if GSSAPI wrapping fails
 */
 hash<GssWrapInfo> GssAcceptorContext::wrap(string message_hex, bool confidential = True, int qop = 0) {
-    return ctx->wrap(message_hex->c_str(), confidential, (int)qop, xsink);
+    return ctx->wrap(message_hex->c_str(), confidential, static_cast<int>(qop), xsink);
 }
 
 //! Unwraps a hex-encoded GSSAPI protected token
@@ -188,5 +188,32 @@ hash<GssUnwrapInfo> GssAcceptorContext::unwrap(string token_hex) {
     @throw KRB5-GSS-ERROR if the GSSAPI library cannot compute the size limit
 */
 int GssAcceptorContext::getWrapSizeLimit(int output_size, bool confidential = True, int qop = 0) {
-    return ctx->getWrapSizeLimit(output_size, confidential, (int)qop, xsink);
+    return ctx->getWrapSizeLimit(output_size, confidential, static_cast<int>(qop), xsink);
+}
+
+//! Returns the delegated credential from a completed context
+/** When the initiator requests credential delegation
+    (@ref Qore::Krb5::GSS_DELEG_FLAG) and the acceptor context completes
+    successfully, this method extracts the delegated credential handle.
+    The credential can then be used to initiate new GSSAPI contexts on
+    behalf of the original initiator.
+
+    Ownership of the delegated credential is transferred to the returned
+    @ref Qore::Krb5::GssCredential; calling this method a second time
+    will raise an error.
+
+    @return the delegated @ref Qore::Krb5::GssCredential
+
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-DELEGATION-ERROR if no delegated credential is available
+*/
+GssCredential GssAcceptorContext::getDelegatedCredential() {
+    SimpleRefHolder<QoreGssCredential> cred(ctx->getDelegatedCredential(xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_GSSCREDENTIAL, getProgram()), xsink);
+    rv->setPrivate(CID_GSSCREDENTIAL, cred.release());
+    return rv.release();
 }

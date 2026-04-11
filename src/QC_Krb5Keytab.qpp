@@ -91,7 +91,8 @@ bool Krb5Keytab::hasContent() [flags=CONSTANT] {
 */
 nothing Krb5Keytab::addEntry(Krb5Principal[QoreKrb5Principal] principal, string key_hex, int enctype,
         *int kvno) {
-    keytab->addEntry(**principal, key_hex->c_str(), (krb5_enctype)enctype, kvno ? (krb5_kvno)(int)kvno : 1, xsink);
+    keytab->addEntry(**principal, key_hex->c_str(), static_cast<krb5_enctype>(enctype),
+        kvno ? static_cast<krb5_kvno>(static_cast<int>(kvno)) : 1, xsink);
 }
 
 //! Looks up a keytab entry
@@ -105,8 +106,9 @@ nothing Krb5Keytab::addEntry(Krb5Principal[QoreKrb5Principal] principal, string 
 */
 hash<Krb5KeytabEntryInfo> Krb5Keytab::getEntry(Krb5Principal[QoreKrb5Principal] principal, *int kvno,
         *int enctype) [flags=CONSTANT] {
-    return keytab->getEntry(**principal, kvno ? (krb5_kvno)(int)kvno : 0, enctype ? (krb5_enctype)(int)enctype : 0,
-        xsink);
+    return keytab->getEntry(**principal,
+        kvno ? static_cast<krb5_kvno>(static_cast<int>(kvno)) : 0,
+        enctype ? static_cast<krb5_enctype>(static_cast<int>(enctype)) : 0, xsink);
 }
 
 //! Lists all entries in the keytab
@@ -118,4 +120,19 @@ hash<Krb5KeytabEntryInfo> Krb5Keytab::getEntry(Krb5Principal[QoreKrb5Principal] 
 */
 list<hash<Krb5KeytabEntryInfo>> Krb5Keytab::listEntries() [flags=CONSTANT] {
     return keytab->listEntries(xsink);
+}
+
+//! Removes a keytab entry matching the given principal, key version, and enctype
+/** @param principal principal to match
+    @param kvno key version number to match; use 0 to match the highest kvno
+    @param enctype Kerberos enctype identifier to match; use 0 for any enctype
+
+    @throw KRB5-KEYTAB-ERROR if no matching entry is found or the entry cannot be removed
+    @throw KRB5-SANDBOX-ERROR if the keytab backend is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if a file-backed keytab is outside the filesystem sandbox
+*/
+nothing Krb5Keytab::removeEntry(Krb5Principal[QoreKrb5Principal] principal, *int kvno, *int enctype) {
+    keytab->removeEntry(**principal,
+        kvno ? static_cast<krb5_kvno>(static_cast<int>(kvno)) : 0,
+        enctype ? static_cast<krb5_enctype>(static_cast<int>(enctype)) : 0, xsink);
 }

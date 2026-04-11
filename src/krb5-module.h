@@ -164,6 +164,7 @@ public:
     bool has_channel_bindings = false;
     bool complete = false;
     std::string initiator_display;
+    gss_cred_id_t delegated_cred = GSS_C_NO_CREDENTIAL;
 
     DLLLOCAL QoreGssAcceptorContext(const QoreHashNode* opts, ExceptionSink* xsink);
     DLLLOCAL QoreGssAcceptorContext(QoreGssCredential* cred, const QoreHashNode* opts, ExceptionSink* xsink);
@@ -176,6 +177,7 @@ public:
     DLLLOCAL QoreHashNode* wrap(const char* message_hex, bool confidential, int qop, ExceptionSink* xsink);
     DLLLOCAL QoreHashNode* unwrap(const char* token_hex, ExceptionSink* xsink);
     DLLLOCAL int64 getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink);
+    DLLLOCAL QoreGssCredential* getDelegatedCredential(ExceptionSink* xsink);
 };
 
 class QoreGssCredential : public AbstractPrivateData {
@@ -185,6 +187,7 @@ public:
     DLLLOCAL QoreGssCredential(const QoreKrb5CredentialCache& cache, ExceptionSink* xsink);
     DLLLOCAL QoreGssCredential(const QoreKrb5Keytab& keytab, const QoreKrb5Principal* principal,
         ExceptionSink* xsink);
+    DLLLOCAL explicit QoreGssCredential(gss_cred_id_t existing_cred);
     DLLLOCAL ~QoreGssCredential() override;
 };
 
@@ -242,6 +245,10 @@ public:
         const char* password, const QoreHashNode* opts, ExceptionSink* xsink) const;
     DLLLOCAL QoreKrb5Credentials* acquireCredentialsWithKeytab(const QoreKrb5Principal& principal,
         const QoreKrb5Keytab& keytab, const QoreHashNode* opts, ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Credentials* renewCredentials(const QoreKrb5CredentialCache& cache,
+        const QoreKrb5Principal& client, ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Credentials* acquireServiceCredentials(const QoreKrb5CredentialCache& cache,
+        const QoreKrb5Principal& service, ExceptionSink* xsink) const;
 };
 
 class QoreKrb5Keytab : public AbstractPrivateData {
@@ -260,6 +267,8 @@ public:
     DLLLOCAL QoreHashNode* getEntry(const QoreKrb5Principal& principal, krb5_kvno kvno, krb5_enctype enctype,
         ExceptionSink* xsink) const;
     DLLLOCAL QoreListNode* listEntries(ExceptionSink* xsink) const;
+    DLLLOCAL int removeEntry(const QoreKrb5Principal& principal, krb5_kvno kvno, krb5_enctype enctype,
+        ExceptionSink* xsink);
 };
 
 #endif

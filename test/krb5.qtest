@@ -92,6 +92,69 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testEnctypeNameFallback());
         addTestCase("credential cache store rejected under filesystem sandbox",
             \testCacheStoreSandboxDeny());
+        addTestCase("gss client context reset state", \testGssClientContextResetState());
+        addTestCase("gss acceptor context reset state", \testGssAcceptorContextResetState());
+        addTestCase("gss wrap confidential false incomplete context",
+            \testGssWrapConfidentialFalseIncompleteContext());
+        addTestCase("gss wrap size limit boundary values", \testGssWrapSizeLimitBoundaryValues());
+        addTestCase("initial credentials boolean options accepted",
+            \testInitialCredentialsBooleanOptionsAccepted());
+        addTestCase("initial credentials negative start time rejected",
+            \testInitialCredentialsNegativeStartTimeRejected());
+        addTestCase("initial credentials start time overflow rejected",
+            \testInitialCredentialsStartTimeOverflowRejected());
+        addTestCase("initial credentials negative ticket lifetime rejected",
+            \testInitialCredentialsNegativeTicketLifetimeRejected());
+        addTestCase("initial credentials negative renew lifetime rejected",
+            \testInitialCredentialsNegativeRenewLifetimeRejected());
+        addTestCase("initial credentials negative enctype rejected",
+            \testInitialCredentialsNegativeEnctypeRejected());
+        addTestCase("initial credentials enctype overflow rejected",
+            \testInitialCredentialsEnctypeOverflowRejected());
+        addTestCase("initial credentials in cache sandbox deny",
+            \testInitialCredentialsInCacheSandboxDeny());
+        addTestCase("initial credentials out cache sandbox deny",
+            \testInitialCredentialsOutCacheSandboxDeny());
+        addTestCase("principal three components", \testPrincipalThreeComponents());
+        addTestCase("principal very long name", \testPrincipalVeryLongName());
+        addTestCase("principal empty rejected", \testPrincipalEmptyRejected());
+        addTestCase("principal negative component index", \testPrincipalNegativeComponentIndex());
+        addTestCase("keytab has content fresh memory", \testKeytabHasContentFreshMemory());
+        addTestCase("keytab has content after add", \testKeytabHasContentAfterAdd());
+        addTestCase("keytab get entry specific kvno", \testKeytabGetEntrySpecificKvno());
+        addTestCase("keytab get entry specific enctype", \testKeytabGetEntrySpecificEnctype());
+        addTestCase("keytab multiple entries same principal",
+            \testKeytabMultipleEntriesSamePrincipal());
+        addTestCase("credential cache multiple credentials",
+            \testCredentialCacheMultipleCredentials());
+        addTestCase("credential cache get principal on empty cache",
+            \testCredentialCacheGetPrincipalOnEmptyCache());
+        addTestCase("gss acceptor delegated credential incomplete context",
+            \testGssAcceptorDelegatedCredentialIncompleteContext());
+        addTestCase("spnego negotiate token build", \testSpnegoNegotiateTokenBuild());
+        addTestCase("spnego negotiate token empty rejected", \testSpnegoNegotiateTokenEmptyRejected());
+        addTestCase("spnego negotiate token odd length rejected",
+            \testSpnegoNegotiateTokenOddLengthRejected());
+        addTestCase("spnego negotiate token invalid hex rejected",
+            \testSpnegoNegotiateTokenInvalidHexRejected());
+        addTestCase("spnego parse response empty rejected", \testSpnegoParseResponseEmptyRejected());
+        addTestCase("spnego parse response invalid data rejected",
+            \testSpnegoParseResponseInvalidDataRejected());
+        addTestCase("spnego round trip", \testSpnegoRoundTrip());
+        addTestCase("renew credentials empty cache", \testRenewCredentialsEmptyCache());
+        addTestCase("renew credentials sandbox deny", \testRenewCredentialsSandboxDeny());
+        addTestCase("renew credentials requires network domain",
+            \testRenewCredentialsRequiresNetworkDomain());
+        addTestCase("acquire service credentials empty cache",
+            \testAcquireServiceCredentialsEmptyCache());
+        addTestCase("acquire service credentials sandbox deny",
+            \testAcquireServiceCredentialsSandboxDeny());
+        addTestCase("acquire service credentials requires network domain",
+            \testAcquireServiceCredentialsRequiresNetworkDomain());
+        addTestCase("keytab remove entry", \testKeytabRemoveEntry());
+        addTestCase("keytab remove entry non existent", \testKeytabRemoveEntryNonExistent());
+        addTestCase("keytab remove entry sandbox deny", \testKeytabRemoveEntrySandboxDeny());
+        addTestCase("keytab remove then has content", \testKeytabRemoveThenHasContent());
 
         set_return_value(main());
     }
@@ -1085,5 +1148,515 @@ public class Krb5ModuleTest inherits QUnit::Test {
             p.callFunction("test_denied_cache_store");
         });
         cleanupSandboxCache(cachePath);
+    }
+
+    private testGssClientContextResetState() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertFalse(ctx.isComplete());
+        ctx.reset();
+        assertFalse(ctx.isComplete());
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+    }
+
+    private testGssAcceptorContextResetState() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertFalse(ctx.isComplete());
+        assertEq(NOTHING, ctx.getInitiatorName());
+        ctx.reset();
+        assertFalse(ctx.isComplete());
+        assertEq(NOTHING, ctx.getInitiatorName());
+    }
+
+    private testGssWrapConfidentialFalseIncompleteContext() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.wrap("deadbeef", False);
+        });
+    }
+
+    private testGssWrapSizeLimitBoundaryValues() {
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+        # Both should fail with state error (incomplete), not argument error
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getWrapSizeLimit(0);
+        });
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getWrapSizeLimit(2147483647);
+        });
+    }
+
+    private testInitialCredentialsBooleanOptionsAccepted() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+
+        # Each boolean option should be accepted at the option-parsing level.
+        # The error should come from KDC contact, not option validation.
+        list<string> boolOpts = ("forwardable", "proxiable", "anonymous", "pac_request",
+            "change_password_prompt");
+        for (int i = 0; i < boolOpts.size(); i++) {
+            hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+            opts{boolOpts[i]} = True;
+            assertThrows("KRB5-INIT-CREDS-ERROR", sub() {
+                ctx.acquireCredentialsWithPassword(p, "test", opts);
+            });
+        }
+    }
+
+    private testInitialCredentialsNegativeStartTimeRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+        opts.start_time = -1;
+        assertThrows("KRB5-INIT-CREDS-ERROR", "start_time", sub() {
+            ctx.acquireCredentialsWithPassword(p, "test", opts);
+        });
+    }
+
+    private testInitialCredentialsStartTimeOverflowRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+        opts.start_time = 2147483648;
+        assertThrows("KRB5-INIT-CREDS-ERROR", "start_time", sub() {
+            ctx.acquireCredentialsWithPassword(p, "test", opts);
+        });
+    }
+
+    private testInitialCredentialsNegativeTicketLifetimeRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+        opts.ticket_lifetime = -1;
+        assertThrows("KRB5-INIT-CREDS-ERROR", "ticket_lifetime", sub() {
+            ctx.acquireCredentialsWithPassword(p, "test", opts);
+        });
+    }
+
+    private testInitialCredentialsNegativeRenewLifetimeRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+        opts.renew_lifetime = -1;
+        assertThrows("KRB5-INIT-CREDS-ERROR", "renew_lifetime", sub() {
+            ctx.acquireCredentialsWithPassword(p, "test", opts);
+        });
+    }
+
+    private testInitialCredentialsNegativeEnctypeRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+        opts.enctypes = (-1,);
+        assertThrows("KRB5-INIT-CREDS-ERROR", "enctypes", sub() {
+            ctx.acquireCredentialsWithPassword(p, "test", opts);
+        });
+    }
+
+    private testInitialCredentialsEnctypeOverflowRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+        opts.enctypes = (2147483648,);
+        assertThrows("KRB5-INIT-CREDS-ERROR", "enctypes", sub() {
+            ctx.acquireCredentialsWithPassword(p, "test", opts);
+        });
+    }
+
+    private testInitialCredentialsInCacheSandboxDeny() {
+        string cachePath = getSandboxCachePath("in-cache-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_in_cache() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+                opts.in_ccache_name = \"FILE:%s\";
+                ctx.acquireCredentialsWithPassword(principal, \"secret\", opts);
+            }
+        ", cachePath), "sandbox_denied_in_cache");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", sub() {
+            p.callFunction("test_denied_in_cache");
+        });
+        cleanupSandboxCache(cachePath);
+    }
+
+    private testInitialCredentialsOutCacheSandboxDeny() {
+        string cachePath = getSandboxCachePath("out-cache-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_out_cache() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+                opts.out_ccache_name = \"FILE:%s\";
+                ctx.acquireCredentialsWithPassword(principal, \"secret\", opts);
+            }
+        ", cachePath), "sandbox_denied_out_cache");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", sub() {
+            p.callFunction("test_denied_out_cache");
+        });
+        cleanupSandboxCache(cachePath);
+    }
+
+    private testPrincipalThreeComponents() {
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com/extra@REALM");
+        assertEq(3, p.getComponentCount());
+        assertEq("HTTP", p.getComponent(0));
+        assertEq("host.example.com", p.getComponent(1));
+        assertEq("extra", p.getComponent(2));
+        assertEq("REALM", p.getRealm());
+    }
+
+    private testPrincipalVeryLongName() {
+        string longComponent = strmul("a", 1000);
+        string longPrincipal = longComponent + "@EXAMPLE.COM";
+        Qore::Krb5::Krb5Principal p(longPrincipal);
+        assertEq(longPrincipal, p.toString());
+        assertEq(longComponent, p.getComponent(0));
+    }
+
+    private testPrincipalEmptyRejected() {
+        assertThrows("KRB5-PRINCIPAL-ERROR", sub() {
+            Qore::Krb5::Krb5Principal p("");
+        });
+    }
+
+    private testPrincipalNegativeComponentIndex() {
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        assertThrows("KRB5-PRINCIPAL-ERROR", sub() {
+            p.getComponent(-1);
+        });
+    }
+
+    private testKeytabHasContentFreshMemory() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:fresh-has-content-test");
+        assertFalse(kt.hasContent());
+    }
+
+    private testKeytabHasContentAfterAdd() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:add-has-content-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        assertTrue(kt.hasContent());
+    }
+
+    private testKeytabGetEntrySpecificKvno() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:kvno-select-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 3);
+
+        hash<Qore::Krb5::Krb5KeytabEntryInfo> entry = kt.getEntry(p, 1);
+        assertEq(1, entry.kvno);
+
+        entry = kt.getEntry(p, 3);
+        assertEq(3, entry.kvno);
+    }
+
+    private testKeytabGetEntrySpecificEnctype() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:enctype-select-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        string keyHex128 = "00112233445566778899aabbccddeeff";
+        kt.addEntry(p, keyHex128, Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+
+        hash<Qore::Krb5::Krb5KeytabEntryInfo> entry = kt.getEntry(p, 0,
+            Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96);
+        assertEq(Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96, entry.enctype);
+    }
+
+    private testKeytabMultipleEntriesSamePrincipal() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:multi-entry-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        string keyHex128 = "00112233445566778899aabbccddeeff";
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, keyHex128, Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 2);
+        assertEq(3, kt.listEntries().size());
+    }
+
+    private testCredentialCacheMultipleCredentials() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server1("HTTP/host1.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server2("HTTP/host2.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Credentials creds1(client, server1, getTestKeyHex1(),
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000);
+        Qore::Krb5::Krb5Credentials creds2(client, server2, getTestKeyHex2(),
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000);
+        auto cc = ctx.createMemoryCredentialCache(client, "multi-creds-test");
+        cc.initialize(client);
+        cc.storeCredentials(creds1);
+        cc.storeCredentials(creds2);
+        assertEq(2, cc.listCredentials().size());
+    }
+
+    private testCredentialCacheGetPrincipalOnEmptyCache() {
+        # Use openCredentialCache to get an uninitialized MEMORY cache
+        Qore::Krb5::Krb5Context ctx();
+        auto cc = ctx.openCredentialCache("MEMORY:empty-get-principal-test");
+        assertFalse(cc.hasPrimaryPrincipal());
+        assertThrows("KRB5-CACHE-ERROR", sub() {
+            cc.getPrimaryPrincipal();
+        });
+    }
+
+    private testGssAcceptorDelegatedCredentialIncompleteContext() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getDelegatedCredential();
+        });
+    }
+
+    private testSpnegoNegotiateTokenBuild() {
+        # Build an SPNEGO token from a known GSS token hex
+        string gssHex = "deadbeefcafebabe";
+        string b64 = Krb5Util::negotiateSpnegoToken(gssHex);
+        assertTrue(b64.val());
+
+        # Decode and verify the structure contains the SPNEGO OID and original token
+        binary decoded = parse_base64_string(b64);
+        assertTrue(decoded.size() > 0);
+        # First byte should be APPLICATION[0] = 0x60
+        assertEq(0x60, decoded[0]);
+        # Should contain the SPNEGO OID bytes: 2b 06 01 05 05 02
+        string decodedHex = make_hex_string(decoded);
+        assertTrue(decodedHex.find("2b0601050502") >= 0);
+        # Should contain the original token bytes
+        assertTrue(decodedHex.find(gssHex) >= 0);
+    }
+
+    private testSpnegoNegotiateTokenEmptyRejected() {
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoToken("");
+        });
+    }
+
+    private testSpnegoNegotiateTokenOddLengthRejected() {
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoToken("abc");
+        });
+    }
+
+    private testSpnegoNegotiateTokenInvalidHexRejected() {
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::negotiateSpnegoToken("xyz0");
+        });
+    }
+
+    private testSpnegoParseResponseEmptyRejected() {
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoResponse("");
+        });
+    }
+
+    private testSpnegoParseResponseInvalidDataRejected() {
+        # Valid base64 but not a valid SPNEGO NegTokenResp
+        assertThrows("KRB5-SPNEGO-ERROR", sub() {
+            Krb5Util::parseSpnegoResponse(make_base64_string(<deadbeef>));
+        });
+    }
+
+    private testSpnegoRoundTrip() {
+        # Build a NegTokenResp manually with a known responseToken
+        string knownTokenHex = "cafebabe12345678";
+        binary knownToken = parse_hex_string(knownTokenHex);
+
+        # NegTokenResp ::= SEQUENCE {
+        #   [0] ENUMERATED { accept-incomplete(1) }   -- negState
+        #   [2] OCTET STRING { responseToken }
+        # }
+        # negState: a0 03 0a 01 01  (ENUMERATED 1 = accept-incomplete)
+        binary negState = parse_hex_string("a003" + "0a0101");
+        # responseToken: a2 LEN 04 LEN <token>
+        binary octetString = <04> + binary(chr(knownToken.size())) + knownToken;
+        binary responseTokenField = <a2> + binary(chr(octetString.size())) + octetString;
+        binary seqContent = negState + responseTokenField;
+        binary seq = <30> + binary(chr(seqContent.size())) + seqContent;
+        binary negTokenResp = <a1> + binary(chr(seq.size())) + seq;
+
+        string b64 = make_base64_string(negTokenResp);
+        string extracted = Krb5Util::parseSpnegoResponse(b64);
+        assertEq(knownTokenHex, extracted);
+    }
+
+    private testRenewCredentialsEmptyCache() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        auto cc = ctx.openCredentialCache("MEMORY:renew-empty-test");
+        assertThrows("KRB5-RENEW-ERROR", sub() {
+            ctx.renewCredentials(cc, p);
+        });
+    }
+
+    private testRenewCredentialsSandboxDeny() {
+        string cachePath = getSandboxCachePath("renew-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_renew() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                auto cc = ctx.openCredentialCache(\"FILE:%s\");
+                ctx.renewCredentials(cc, principal);
+            }
+        ", cachePath), "sandbox_denied_renew");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", sub() {
+            p.callFunction("test_denied_renew");
+        });
+        cleanupSandboxCache(cachePath);
+    }
+
+    private testRenewCredentialsRequiresNetworkDomain() {
+        Program p(PO_MODERN | PO_NO_NETWORK);
+        p.loadModule("krb5");
+        assertThrows("PARSE-EXCEPTION", "renewCredentials", sub() {
+            p.parse("
+                nothing sub test_network_blocked_renew() {
+                    Qore::Krb5::Krb5Context ctx();
+                    Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                    auto cc = ctx.openCredentialCache(\"MEMORY:nd-renew\");
+                    ctx.renewCredentials(cc, principal);
+                }
+            ", "no_network_renew");
+        });
+    }
+
+    private testAcquireServiceCredentialsEmptyCache() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal service("HTTP/host.example.com@EXAMPLE.COM");
+        auto cc = ctx.openCredentialCache("MEMORY:svc-empty-test");
+        assertThrows("KRB5-SERVICE-CREDS-ERROR", sub() {
+            ctx.acquireServiceCredentials(cc, service);
+        });
+    }
+
+    private testAcquireServiceCredentialsSandboxDeny() {
+        string cachePath = getSandboxCachePath("svc-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_svc_creds() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal service(\"HTTP/host.example.com@EXAMPLE.COM\");
+                auto cc = ctx.openCredentialCache(\"FILE:%s\");
+                ctx.acquireServiceCredentials(cc, service);
+            }
+        ", cachePath), "sandbox_denied_svc_creds");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", sub() {
+            p.callFunction("test_denied_svc_creds");
+        });
+        cleanupSandboxCache(cachePath);
+    }
+
+    private testAcquireServiceCredentialsRequiresNetworkDomain() {
+        Program p(PO_MODERN | PO_NO_NETWORK);
+        p.loadModule("krb5");
+        assertThrows("PARSE-EXCEPTION", "acquireServiceCredentials", sub() {
+            p.parse("
+                nothing sub test_network_blocked_svc() {
+                    Qore::Krb5::Krb5Context ctx();
+                    Qore::Krb5::Krb5Principal service(\"HTTP/host.example.com@EXAMPLE.COM\");
+                    auto cc = ctx.openCredentialCache(\"MEMORY:nd-svc\");
+                    ctx.acquireServiceCredentials(cc, service);
+                }
+            ", "no_network_svc_creds");
+        });
+    }
+
+    private testKeytabRemoveEntry() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:remove-entry-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 2);
+        assertEq(2, kt.listEntries().size());
+
+        kt.removeEntry(p, 1, Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> remaining = kt.listEntries();
+        assertEq(1, remaining.size());
+        assertEq(2, remaining[0].kvno);
+    }
+
+    private testKeytabRemoveEntryNonExistent() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:remove-nonexist-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+
+        Qore::Krb5::Krb5Principal other("HTTP/other.example.com@EXAMPLE.COM");
+        assertThrows("KRB5-KEYTAB-ERROR", sub() {
+            kt.removeEntry(other, 1, Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+        });
+    }
+
+    private testKeytabRemoveEntrySandboxDeny() {
+        string keytabPath = getSandboxKeytabPath("remove-deny");
+        cleanupSandboxKeytab(keytabPath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_kt_remove() {
+                Qore::Krb5::Krb5Context ctx();
+                auto kt = ctx.openKeytab(\"FILE:%s\");
+                Qore::Krb5::Krb5Principal principal(\"HTTP/host.example.com@EXAMPLE.COM\");
+                kt.removeEntry(principal, 1, Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+            }
+        ", keytabPath), "sandbox_denied_kt_remove");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", sub() {
+            p.callFunction("test_denied_kt_remove");
+        });
+        cleanupSandboxKeytab(keytabPath);
+    }
+
+    private testKeytabRemoveThenHasContent() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:remove-hascontent-test");
+        Qore::Krb5::Krb5Principal p("HTTP/host.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        assertTrue(kt.hasContent());
+        kt.removeEntry(p, 1, Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+        assertFalse(kt.hasContent());
     }
 }

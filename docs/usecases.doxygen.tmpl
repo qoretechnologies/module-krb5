@@ -129,13 +129,70 @@
     quiet but significant ergonomics advantage over equivalent Python and
     Java stacks, where Kerberos tests typically require a containerized KDC.
 
+    @section krb5uc_delegation Credential Delegation
+
+    @ref Qore::Krb5::GssAcceptorContext::getDelegatedCredential()
+    "GssAcceptorContext::getDelegatedCredential()" lets a service endpoint
+    extract the delegated @ref Qore::Krb5::GssCredential after a GSSAPI
+    exchange where the initiator set \c GSS_DELEG_FLAG. The extracted
+    credential can then be used to initiate Kerberized connections to
+    further backends on behalf of the original caller.
+
+    This is a building block for multi-hop authentication scenarios: a Qorus
+    workflow step can accept a user's Kerberos identity, extract the
+    delegated credential, and use it to connect to an LDAP directory or
+    database as that user rather than as the service account. Because
+    delegation passes real Kerberos credentials, audit trails on the
+    downstream service record the original user, not the intermediary.
+
+    @note Delegation should only be enabled when the trust relationship
+    between initiator and acceptor is well understood. See
+    @ref krb5sec_delegation for the security implications.
+
+    @section krb5uc_key_rotation Keytab Key Rotation
+
+    @ref Qore::Krb5::Krb5Keytab::removeEntry() "Krb5Keytab::removeEntry()"
+    enables controlled key rotation workflows. The recommended pattern is:
+
+    -# Add the new key version to the keytab with
+       @ref Qore::Krb5::Krb5Keytab::addEntry() "addEntry()".
+    -# Validate that the new key works for authentication.
+    -# Remove the old key version with \c removeEntry().
+
+    This overlapping-key window ensures that in-flight requests
+    authenticated with the old key still succeed during the transition. See
+    @ref krb5examples_keytab_rotation for a runnable example.
+
+    @section krb5uc_http_spnego HTTP SPNEGO Authentication
+
+    The \c Krb5Util helper module provides
+    \c Krb5Util::negotiateSpnegoToken() and
+    \c Krb5Util::parseSpnegoResponse() for constructing and parsing
+    <a href="https://datatracker.ietf.org/doc/html/rfc4178">RFC 4178</a>
+    SPNEGO envelopes. Combined with the
+    @ref Qore::Krb5::GssClientContext token loop and the
+    @ref Qore::Krb5::GssAcceptorContext acceptor, %Qore applications can
+    implement both sides of
+    <a href="https://datatracker.ietf.org/doc/html/rfc4559">HTTP Negotiate</a>
+    authentication natively:
+
+    - **Client-side**: the initiator calls
+      @ref Qore::Krb5::GssClientContext::step() "step()", wraps the
+      resulting GSSAPI token in SPNEGO with \c negotiateSpnegoToken(), and
+      sends it as an \c "Authorization: Negotiate" header.
+    - **Server-side**: the acceptor unwraps the SPNEGO envelope, feeds the
+      inner GSSAPI token to
+      @ref Qore::Krb5::GssAcceptorContext::step() "step()", wraps the
+      response in SPNEGO, and sends it back as a
+      \c "WWW-Authenticate: Negotiate" header.
+
+    See @ref krb5examples_spnego_negotiate for a runnable example.
+
     @section krb5uc_extensions Natural Extensions
 
     These are out of scope for the current release but fit naturally on top
     of the existing primitives:
 
-    - **Acceptor-side GSSAPI** — would let Qorus's own HTTP server terminate
-      SPNEGO natively instead of relying on a reverse proxy.
     - **Constrained delegation
       (<a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/3bff5864-8135-400e-bdd9-33b552051d94">S4U2Self
       / S4U2Proxy</a>)** — would let Qorus act as an identity-forwarding

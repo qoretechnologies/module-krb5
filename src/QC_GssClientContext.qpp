@@ -241,7 +241,7 @@ hash<GssStepInfo> GssClientContext::step(string token_hex) {
     @throw KRB5-GSS-ERROR if GSSAPI wrapping fails
 */
 hash<GssWrapInfo> GssClientContext::wrap(string message_hex, bool confidential = True, int qop = 0) {
-    return ctx->wrap(message_hex->c_str(), confidential, (int)qop, xsink);
+    return ctx->wrap(message_hex->c_str(), confidential, static_cast<int>(qop), xsink);
 }
 
 //! Unwraps a hex-encoded GSSAPI protected token
@@ -271,5 +271,5 @@ hash<GssUnwrapInfo> GssClientContext::unwrap(string token_hex) {
     @throw KRB5-GSS-ERROR if the GSSAPI library cannot compute the size limit
 */
 int GssClientContext::getWrapSizeLimit(int output_size, bool confidential = True, int qop = 0) {
-    return ctx->getWrapSizeLimit(output_size, confidential, (int)qop, xsink);
+    return ctx->getWrapSizeLimit(output_size, confidential, static_cast<int>(qop), xsink);
 }

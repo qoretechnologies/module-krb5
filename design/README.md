@@ -68,13 +68,19 @@ output buffers are released even on early-return error paths.
 
 ## Scope boundaries for 1.0
 
-- Only initiator-side GSSAPI. Acceptor-side contexts, delegated credentials,
-  and credential export are out of scope.
-- Only initial credential acquisition from passwords and keytabs. TGS-service
-  credential requests, ticket renewal, and credential export are out of scope.
-- Keytab management is limited to adding entries and enumerating; removal and
-  rotation are out of scope.
+- Both initiator-side (`GssClientContext`) and acceptor-side (`GssAcceptorContext`)
+  GSSAPI contexts, including channel bindings and message protection.
+- Initial credential acquisition from passwords and keytabs.
+- Keytab management: adding entries and enumerating.
 - No KDC replication, admin (kadmin) operations, or prompter callbacks.
 
-These constraints keep the surface small enough to audit while still covering
-the immediate Active Directory / LDAP authentication use case.
+## Planned extensions
+
+- **Credential delegation** — extracting delegated credentials from the
+  acceptor context after an exchange with `GSS_C_DELEG_FLAG`.
+- **Credential renewal** — `krb5_get_renewed_creds` for long-running services.
+- **TGS service ticket requests** — `krb5_get_credentials` to obtain service
+  tickets from a TGT without going through GSSAPI.
+- **Keytab entry removal** — `krb5_kt_remove_entry` for key rotation workflows.
+- **SPNEGO helpers** — RFC 4178 NegTokenInit / NegTokenResp envelope
+  construction for HTTP Negotiate integration.

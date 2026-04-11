@@ -78,10 +78,10 @@ DLLLOCAL int krb5_raise_exception(ExceptionSink* xsink, krb5_context ctx, krb5_e
         const char* err, const char* context) {
     const char* msg = ctx ? krb5_get_error_message(ctx, rc) : nullptr;
     if (msg) {
-        xsink->raiseException(err, "%s: %s (%d)", context, msg, (int)rc);
+        xsink->raiseException(err, "%s: %s (%d)", context, msg, static_cast<int>(rc));
         krb5_free_error_message(ctx, msg);
     } else {
-        xsink->raiseException(err, "%s: error code %d", context, (int)rc);
+        xsink->raiseException(err, "%s: error code %d", context, static_cast<int>(rc));
     }
     return -1;
 }
@@ -121,7 +121,7 @@ DLLLOCAL int gss_raise_exception(ExceptionSink* xsink, const char* err, OM_uint3
     }
 
     xsink->raiseException(err, "%s: %s (major=%u minor=%u)", context, message.c_str(),
-        (unsigned int)major, (unsigned int)minor);
+        static_cast<unsigned int>(major), static_cast<unsigned int>(minor));
     return -1;
 }
 
@@ -151,7 +151,7 @@ DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, Excep
         int hi = from_hex(str[i]);
         int lo = from_hex(str[i + 1]);
         if (hi < 0 || lo < 0) {
-            xsink->raiseException(err, "%s: invalid hex character at position %d", context, (int)i);
+            xsink->raiseException(err, "%s: invalid hex character at position %d", context, static_cast<int>(i));
             return false;
         }
         out.push_back((hi << 4) | lo);
@@ -522,7 +522,7 @@ private:
             xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' must be between 0 and %u", key, UINT32_MAX);
             return;
         }
-        value = (OM_uint32)i;
+        value = static_cast<OM_uint32>(i);
     }
 
     DLLLOCAL static void parseHexOption(const QoreHashNode* opts, const char* key, std::vector<unsigned char>& value,
@@ -563,7 +563,7 @@ public:
                 xsink->raiseException("KRB5-GSS-ARG-ERROR", "option 'flags' must be between 0 and %u", UINT32_MAX);
                 return;
             }
-            req_flags = (OM_uint32)flags;
+            req_flags = static_cast<OM_uint32>(flags);
         }
 
         v = opts->getKeyValue("lifetime");
@@ -574,7 +574,7 @@ public:
                     UINT32_MAX);
                 return;
             }
-            lifetime_req = (OM_uint32)lifetime;
+            lifetime_req = static_cast<OM_uint32>(lifetime);
         }
 
         v = opts->getKeyValue("mechanism");
@@ -786,7 +786,8 @@ QoreHashNode* QoreGssClientContext::wrap(const char* message_hex, bool confident
     int conf_state = 0;
     GssBufferHolder output;
     OM_uint32 min_stat = 0;
-    OM_uint32 maj = gss_wrap(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop, &input, &conf_state, &output.buf);
+    OM_uint32 maj = gss_wrap(&min_stat, ctx, confidential ? 1 : 0, static_cast<gss_qop_t>(qop), &input, &conf_state,
+        &output.buf);
     if (maj != GSS_S_COMPLETE) {
         gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "wrapping GSSAPI message");
         return nullptr;
@@ -869,8 +870,8 @@ int64 QoreGssClientContext::getWrapSizeLimit(int64 output_size, bool confidentia
 
     OM_uint32 max_input_size = 0;
     OM_uint32 min_stat = 0;
-    OM_uint32 maj = gss_wrap_size_limit(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop,
-        (OM_uint32)output_size, &max_input_size);
+    OM_uint32 maj = gss_wrap_size_limit(&min_stat, ctx, confidential ? 1 : 0, static_cast<gss_qop_t>(qop),
+        static_cast<OM_uint32>(output_size), &max_input_size);
     if (maj != GSS_S_COMPLETE) {
         gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "checking GSSAPI wrap size limit");
         return 0;
@@ -951,6 +952,11 @@ void QoreGssAcceptorContext::reset() {
         gss_release_name(&min_stat, &initiator_name);
         initiator_name = GSS_C_NO_NAME;
     }
+    if (delegated_cred != GSS_C_NO_CREDENTIAL) {
+        OM_uint32 min_stat = 0;
+        gss_release_cred(&min_stat, &delegated_cred);
+        delegated_cred = GSS_C_NO_CREDENTIAL;
+    }
     initiator_display.clear();
     complete = false;
 }
@@ -985,7 +991,7 @@ QoreHashNode* QoreGssAcceptorContext::step(const char* token_hex, ExceptionSink*
     OM_uint32 min_stat = 0;
     OM_uint32 maj = gss_accept_sec_context(&min_stat, &ctx, cred_ref ? cred_ref->cred : GSS_C_NO_CREDENTIAL,
         &input_token, has_channel_bindings ? &channel_bindings : GSS_C_NO_CHANNEL_BINDINGS, &src_name,
-        &mech_type, &output_token.buf, &actual_flags, &lifetime, nullptr);
+        &mech_type, &output_token.buf, &actual_flags, &lifetime, &delegated_cred);
 
     if (maj != GSS_S_COMPLETE && maj != GSS_S_CONTINUE_NEEDED) {
         reset();
@@ -1056,7 +1062,8 @@ QoreHashNode* QoreGssAcceptorContext::wrap(const char* message_hex, bool confide
     int conf_state = 0;
     GssBufferHolder output;
     OM_uint32 min_stat = 0;
-    OM_uint32 maj = gss_wrap(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop, &input, &conf_state, &output.buf);
+    OM_uint32 maj = gss_wrap(&min_stat, ctx, confidential ? 1 : 0, static_cast<gss_qop_t>(qop), &input, &conf_state,
+        &output.buf);
     if (maj != GSS_S_COMPLETE) {
         gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "wrapping GSSAPI acceptor message");
         return nullptr;
@@ -1139,13 +1146,33 @@ int64 QoreGssAcceptorContext::getWrapSizeLimit(int64 output_size, bool confident
 
     OM_uint32 max_input_size = 0;
     OM_uint32 min_stat = 0;
-    OM_uint32 maj = gss_wrap_size_limit(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop,
-        (OM_uint32)output_size, &max_input_size);
+    OM_uint32 maj = gss_wrap_size_limit(&min_stat, ctx, confidential ? 1 : 0, static_cast<gss_qop_t>(qop),
+        static_cast<OM_uint32>(output_size), &max_input_size);
     if (maj != GSS_S_COMPLETE) {
         gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "checking GSSAPI acceptor wrap size limit");
         return 0;
     }
     return max_input_size;
+}
+
+QoreGssCredential* QoreGssAcceptorContext::getDelegatedCredential(ExceptionSink* xsink) {
+    if (!complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (delegated_cred == GSS_C_NO_CREDENTIAL) {
+        xsink->raiseException("KRB5-GSS-DELEGATION-ERROR",
+            "no delegated credential available; the initiator may not have set GSS_C_DELEG_FLAG");
+        return nullptr;
+    }
+
+    // Transfer ownership to the returned QoreGssCredential
+    QoreGssCredential* rv = new QoreGssCredential(delegated_cred);
+    delegated_cred = GSS_C_NO_CREDENTIAL;
+    return rv;
+}
+
+QoreGssCredential::QoreGssCredential(gss_cred_id_t existing_cred) : cred(existing_cred) {
 }
 
 QoreGssCredential::QoreGssCredential(const QoreKrb5CredentialCache& cache, ExceptionSink* xsink) {
@@ -1490,7 +1517,7 @@ QoreHashNode* QoreKrb5Credentials::getInfo(ExceptionSink* xsink) const {
 
     char enctype_name[128] = {0};
     if (krb5_enctype_to_name(creds->keyblock.enctype, false, enctype_name, sizeof(enctype_name))) {
-        snprintf(enctype_name, sizeof(enctype_name), "etype-%d", (int)creds->keyblock.enctype);
+        snprintf(enctype_name, sizeof(enctype_name), "etype-%d", static_cast<int>(creds->keyblock.enctype));
     }
 
     rv->setKeyValue("client", client.release(), xsink);
@@ -1682,7 +1709,7 @@ private:
                 "option '%s' must be between 0 and %d seconds", key, INT32_MAX);
             return false;
         }
-        out = (krb5_deltat)value;
+        out = static_cast<krb5_deltat>(value);
         return true;
     }
 
@@ -1823,10 +1850,10 @@ private:
                 int64 etype = l->retrieveEntry(i).getAsBigInt();
                 if (etype <= 0 || etype > INT32_MAX) {
                     xsink->raiseException("KRB5-INIT-CREDS-ERROR",
-                        "option 'enctypes' has invalid enctype value at index %d", (int)i);
+                        "option 'enctypes' has invalid enctype value at index %d", static_cast<int>(i));
                     return;
                 }
-                enctypes.push_back((krb5_enctype)etype);
+                enctypes.push_back(static_cast<krb5_enctype>(etype));
             }
 
             krb5_get_init_creds_opt_set_etype_list(opt, enctypes.data(), enctypes.size());
@@ -1900,6 +1927,86 @@ QoreKrb5Credentials* QoreKrb5Context::acquireCredentialsWithKeytab(const QoreKrb
     return rv.release();
 }
 
+QoreKrb5Credentials* QoreKrb5Context::renewCredentials(const QoreKrb5CredentialCache& cache,
+        const QoreKrb5Principal& client, ExceptionSink* xsink) const {
+    if (!krb5_check_cache_access(cache.ctx, cache.cache, QSEC_READ, xsink, "renewing credentials from cache")) {
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "renewing credentials")) {
+        return nullptr;
+    }
+
+    krb5_creds creds;
+    memset(&creds, 0, sizeof(creds));
+    krb5_error_code rc = krb5_get_renewed_creds(ctx, &creds, client.principal, cache.cache, nullptr);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-RENEW-ERROR", "renewing credentials");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(ctx, creds, xsink));
+    krb5_free_cred_contents(ctx, &creds);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreKrb5Credentials* QoreKrb5Context::acquireServiceCredentials(const QoreKrb5CredentialCache& cache,
+        const QoreKrb5Principal& service, ExceptionSink* xsink) const {
+    if (!krb5_check_cache_access(cache.ctx, cache.cache, QSEC_READ | QSEC_WRITE, xsink,
+            "acquiring service credentials from cache")) {
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "acquiring service credentials")) {
+        return nullptr;
+    }
+
+    krb5_creds in_creds;
+    memset(&in_creds, 0, sizeof(in_creds));
+
+    // Get the cache's primary principal as the client
+    krb5_principal cache_principal = nullptr;
+    krb5_error_code rc = krb5_cc_get_principal(cache.ctx, cache.cache, &cache_principal);
+    if (rc) {
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
+            "reading cache principal for TGS request");
+        return nullptr;
+    }
+
+    rc = krb5_copy_principal(ctx, cache_principal, &in_creds.client);
+    krb5_free_principal(cache.ctx, cache_principal);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
+            "copying client principal for TGS request");
+        return nullptr;
+    }
+
+    rc = krb5_copy_principal(ctx, service.principal, &in_creds.server);
+    if (rc) {
+        krb5_free_principal(ctx, in_creds.client);
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
+            "copying service principal for TGS request");
+        return nullptr;
+    }
+
+    krb5_creds* out_creds = nullptr;
+    rc = krb5_get_credentials(ctx, 0, cache.cache, &in_creds, &out_creds);
+    krb5_free_cred_contents(ctx, &in_creds);
+    if (rc) {
+        krb5_raise_exception(xsink, ctx, rc, "KRB5-SERVICE-CREDS-ERROR",
+            "acquiring service credentials via TGS");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(ctx, *out_creds, xsink));
+    krb5_free_creds(ctx, out_creds);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
 QoreKrb5Keytab::QoreKrb5Keytab(const char* keytab_name, bool use_default, ExceptionSink* xsink) {
     krb5_error_code rc = krb5_init_context(&ctx);
     if (rc) {
@@ -1961,7 +2068,7 @@ static QoreHashNode* krb5_keytab_entry_to_hash(krb5_context ctx, const krb5_keyt
 
     char enctype_name[128] = {0};
     if (krb5_enctype_to_name(entry.key.enctype, false, enctype_name, sizeof(enctype_name))) {
-        snprintf(enctype_name, sizeof(enctype_name), "etype-%d", (int)entry.key.enctype);
+        snprintf(enctype_name, sizeof(enctype_name), "etype-%d", static_cast<int>(entry.key.enctype));
     }
 
     rv->setKeyValue("principal", principal.release(), xsink);
@@ -2113,6 +2220,29 @@ QoreListNode* QoreKrb5Keytab::listEntries(ExceptionSink* xsink) const {
 
     cursor.close();
     return rv.release();
+}
+
+int QoreKrb5Keytab::removeEntry(const QoreKrb5Principal& principal, krb5_kvno kvno, krb5_enctype enctype,
+        ExceptionSink* xsink) {
+    if (!krb5_check_keytab_access(ctx, keytab, QSEC_WRITE, xsink, "removing keytab entry")) {
+        return -1;
+    }
+
+    krb5_keytab_entry entry;
+    memset(&entry, 0, sizeof(entry));
+
+    krb5_error_code rc = krb5_kt_get_entry(ctx, keytab, principal.principal, kvno, enctype, &entry);
+    if (rc) {
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "looking up keytab entry for removal");
+    }
+
+    rc = krb5_kt_remove_entry(ctx, keytab, &entry);
+    krb5_free_keytab_entry_contents(ctx, &entry);
+    if (rc) {
+        return krb5_raise_exception(xsink, ctx, rc, "KRB5-KEYTAB-ERROR", "removing keytab entry");
+    }
+
+    return 0;
 }
 
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {

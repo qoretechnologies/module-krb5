@@ -29,7 +29,8 @@ printf("default realm: %s\n", ctx.getDefaultRealm());
     @section krb5classes Main Classes
 
     - @ref Qore::Krb5::Krb5Context — Kerberos runtime context, cache and
-      keytab discovery, and initial credential acquisition
+      keytab discovery, initial credential acquisition, credential renewal,
+      and TGS service ticket acquisition
     - @ref Qore::Krb5::Krb5Principal — Kerberos principal parsing,
       enterprise-principal
       (<a href="https://learn.microsoft.com/en-us/windows/win32/ad/naming-properties">UPN</a>)
@@ -38,8 +39,8 @@ printf("default realm: %s\n", ctx.getDefaultRealm());
       metadata
     - @ref Qore::Krb5::Krb5CredentialCache — credential cache wrapper
       (file-backed, in-memory, and other backends)
-    - @ref Qore::Krb5::Krb5Keytab — keytab wrapper for service-key lookup
-      and entry management
+    - @ref Qore::Krb5::Krb5Keytab — keytab wrapper for service-key lookup,
+      entry management, and entry removal for key rotation
     - @ref Qore::Krb5::GssCredential — explicit GSSAPI credential imported
       from a Kerberos credential cache or client keytab
     - @ref Qore::Krb5::GssClientContext — initiator-side GSSAPI security
@@ -48,8 +49,8 @@ printf("default realm: %s\n", ctx.getDefaultRealm());
       bindings</a>, and message wrap/unwrap
     - @ref Qore::Krb5::GssAcceptorContext — acceptor-side GSSAPI security
       context for service endpoints, explicit service credentials,
-      authenticated initiator-name reporting, channel bindings, and message
-      wrap/unwrap
+      authenticated initiator-name reporting, channel bindings, message
+      wrap/unwrap, and delegated credential extraction
 
     @section krb5pages Documentation Sections
 
@@ -65,7 +66,12 @@ printf("default realm: %s\n", ctx.getDefaultRealm());
     @section krb5util Utility Module
 
     Use \c "%requires Krb5Util" for %Qore-language helper functions such as
-    \c Krb5Util::getHostBasedServicePrincipal(); see @ref krb5utilintro for
+    \c Krb5Util::getHostBasedServicePrincipal(),
+    \c Krb5Util::negotiateSpnegoToken() for building
+    <a href="https://datatracker.ietf.org/doc/html/rfc4178">SPNEGO</a>
+    NegTokenInit envelopes, and
+    \c Krb5Util::parseSpnegoResponse() for extracting GSSAPI tokens from
+    SPNEGO NegTokenResp responses; see @ref krb5utilintro for
     details. Binary classes and constants remain in the \c Qore::Krb5
     namespace.
 */

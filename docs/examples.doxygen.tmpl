@@ -405,6 +405,170 @@ p.setSandboxManager(sm);
 printf("%s\n", p.callFunction("init_keytab"));
     @endcode
 
+    @section krb5examples_renew_credentials Credential Renewal
+
+    A TGT acquired with a renewable lifetime can be renewed through the KDC
+    without re-authenticating. The workflow is: acquire the initial TGT with
+    a \c renew_lifetime, store it in a credential cache, then call
+    @ref Qore::Krb5::Krb5Context::renewCredentials() "renewCredentials()"
+    before the ticket expires.
+
+    @code{.py}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+
+# Acquire initial TGT with a renewable lifetime
+hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts();
+opts.renew_lifetime = 7 * 24 * 3600;  # 7 days
+opts.forwardable = True;
+
+Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(
+    client, ENV.KRB5_TEST_PASSWORD, opts);
+
+auto cc = ctx.createMemoryCredentialCache(client, "qorus-renew-session");
+cc.storeCredentials(creds);
+
+# Later, before the ticket expires, renew it
+Qore::Krb5::Krb5Credentials renewed = ctx.renewCredentials(cc, client);
+cc.storeCredentials(renewed);
+    @endcode
+
+    @section krb5examples_service_ticket TGS Service Ticket Acquisition
+
+    Once a TGT is in a credential cache, a service ticket for any Kerberized
+    service can be acquired without re-authenticating. This is useful when a
+    single identity needs tickets for multiple backend services.
+
+    @code{.py}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+
+# Assume a valid TGT is already in the cache
+auto cc = ctx.openDefaultCredentialCache();
+
+# Acquire a service ticket for an LDAP server
+Qore::Krb5::Krb5Credentials ldap_ticket = ctx.acquireServiceCredentials(
+    cc, "ldap/ad.example.com@EXAMPLE.COM");
+
+# Acquire a service ticket for an HTTP server
+Qore::Krb5::Krb5Credentials http_ticket = ctx.acquireServiceCredentials(
+    cc, "HTTP/web.example.com@EXAMPLE.COM");
+    @endcode
+
+    @section krb5examples_keytab_rotation Keytab Entry Removal and Key Rotation
+
+    During key rotation, the new key is added before the old one is removed,
+    ensuring that in-flight requests authenticated with the old key still
+    succeed during the transition window.
+
+    @code{.py}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal service("HTTP/qorus.example.com@EXAMPLE.COM");
+auto kt = ctx.openKeytab("FILE:/etc/qorus/qorus.keytab");
+
+# Step 1: Add the new key (kvno 3)
+kt.addEntry(service,
+    "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 3);
+
+# Step 2: Verify the new entry works (application validation here)
+
+# Step 3: Remove the old key (kvno 2)
+kt.removeEntry(service, 2, Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96);
+    @endcode
+
+    @section krb5examples_spnego_negotiate HTTP SPNEGO Negotiate Header
+
+    The \c Krb5Util module provides helpers that wrap raw GSSAPI tokens in
+    <a href="https://datatracker.ietf.org/doc/html/rfc4178">SPNEGO</a>
+    envelopes for HTTP Negotiate authentication. The initiator calls
+    @ref Qore::Krb5::GssClientContext::step() "step()" to obtain the GSSAPI
+    token, wraps it in SPNEGO with
+    \c Krb5Util::negotiateSpnegoToken(), and places the result in an
+    \c Authorization header. Server responses in
+    \c WWW-Authenticate: \c Negotiate headers are unwrapped with
+    \c Krb5Util::parseSpnegoResponse().
+
+    @code{.py}
+%modern
+%requires krb5
+%requires Krb5Util
+
+hash<Qore::Krb5::GssClientContextOptions> opts();
+opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG;
+opts.mechanism = "kerberos";
+opts.name_type = "krb5-principal";
+
+Qore::Krb5::GssClientContext initiator("HTTP/web.example.com@EXAMPLE.COM", opts);
+
+# First leg: produce the initial GSSAPI token
+hash<Qore::Krb5::GssStepInfo> step = initiator.step();
+
+# Wrap in SPNEGO and build the HTTP header
+string auth_header = "Negotiate " + Krb5Util::negotiateSpnegoToken(step.token);
+# -> send as "Authorization: Negotiate <base64>"
+
+# If the server responds with "WWW-Authenticate: Negotiate <base64>":
+string server_b64 = get_www_authenticate_token();
+string gss_hex = Krb5Util::parseSpnegoResponse(server_b64);
+step = initiator.step(gss_hex);
+    @endcode
+
+    @section krb5examples_delegation Credential Delegation Round-Trip
+
+    Credential delegation lets a GSSAPI acceptor act as the authenticated
+    initiator toward further Kerberized services. The initiator must
+    explicitly request delegation with \c GSS_DELEG_FLAG, and the acceptor
+    extracts the delegated credential with
+    @ref Qore::Krb5::GssAcceptorContext::getDelegatedCredential()
+    "getDelegatedCredential()".
+
+    @note The delegated credential is transferred out of the GSSAPI layer
+    and can only be extracted once per context. Subsequent calls raise
+    \c KRB5-GSS-DELEGATION-ERROR. Delegation should only be used when the
+    trust relationship between initiator and acceptor is well understood;
+    see @ref krb5sec_delegation.
+
+    @code{.py}
+%modern
+%requires krb5
+
+# --- Initiator side ---
+hash<Qore::Krb5::GssClientContextOptions> init_opts();
+init_opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS
+    | Qore::Krb5::GSS_CONF_FLAG
+    | Qore::Krb5::GSS_DELEG_FLAG;
+init_opts.mechanism = "kerberos";
+init_opts.name_type = "krb5-principal";
+
+Qore::Krb5::GssClientContext initiator(
+    "HTTP/qorus.example.com@EXAMPLE.COM", init_opts);
+
+# --- Acceptor side ---
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal service("HTTP/qorus.example.com@EXAMPLE.COM");
+Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:/etc/qorus/qorus.keytab");
+Qore::Krb5::GssCredential svc_cred = Qore::Krb5::GssCredential::fromKeytab(kt, service);
+
+Qore::Krb5::GssAcceptorContext acceptor(svc_cred);
+
+# Exchange tokens until both contexts are complete
+# ... (step loop omitted for brevity) ...
+
+# Extract the delegated credential from the acceptor
+Qore::Krb5::GssCredential delegated = acceptor.getDelegatedCredential();
+# 'delegated' can now be used to initiate connections on behalf of the client
+    @endcode
+
     @section krb5examples_synthetic_creds Synthetic Credentials for Tests
 
     The @ref Qore::Krb5::Krb5Credentials constructor accepts explicit

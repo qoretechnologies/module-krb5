@@ -77,6 +77,7 @@ export QORE_MODULE_DIR="$repo_dir/qlib:$build_dir:${QORE_MODULE_DIR:-}"
 
 kdb5_util create -s -P "$master_password" -r "$realm"
 kadmin.local -r "$realm" -q "addprinc -pw $client_password $client_principal"
+kadmin.local -r "$realm" -q "modprinc -maxrenewlife 1h +allow_forwardable $client_principal"
 kadmin.local -r "$realm" -q "addprinc -randkey $service_principal"
 kadmin.local -r "$realm" -q "ktadd -k $keytab $service_principal"
 krb5kdc -P "$pidfile" -r "$realm" -p "$port"
