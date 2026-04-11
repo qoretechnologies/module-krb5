@@ -254,6 +254,39 @@ Qore::Krb5::GssClientContext gss(
     "LDAP/ad.example.com@EXAMPLE.COM", cred, opts);
     @endcode
 
+    @section krb5examples_gss_acceptor GSSAPI Acceptor Context — Service Endpoint
+
+    Service endpoints that accept SASL/GSSAPI authentication should bind the
+    acceptor context to an explicit service keytab credential and exchange
+    hex-encoded tokens until negotiation completes. The authenticated
+    initiator principal is available after the GSSAPI mechanism reports it.
+
+    @code{.py}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal service("HTTP/qorus.example.com@EXAMPLE.COM");
+Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:/etc/qorus/qorus.keytab");
+Qore::Krb5::GssCredential cred = Qore::Krb5::GssCredential::fromKeytab(kt, service);
+
+hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+opts.channel_binding_application_data_hex = get_tls_server_end_point_binding_hex();
+
+Qore::Krb5::GssAcceptorContext acceptor(cred, opts);
+
+*string initiator_token = read_initial_token();
+while (!acceptor.isComplete()) {
+    hash<Qore::Krb5::GssStepInfo> info = acceptor.step(initiator_token);
+    if (info.token) {
+        send_acceptor_token(info.token);
+    }
+    initiator_token = acceptor.isComplete() ? NOTHING : read_next_token();
+}
+
+printf("authenticated initiator: %s\n", acceptor.getInitiatorName());
+    @endcode
+
     @section krb5examples_gss_channel_binding GSSAPI Channel Binding (LDAP over TLS)
 
     For

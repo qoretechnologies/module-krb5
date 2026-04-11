@@ -52,11 +52,13 @@ DLLLOCAL QoreClass* initKrb5CredentialCacheClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5KeytabClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5PrincipalClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initGssCredentialClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initGssAcceptorContextClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initGssClientContextClass(QoreNamespace& ns);
 
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5KeytabEntryInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5CredentialsInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5InitialCredentialsOptions(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssAcceptorContextOptions(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_GssClientContextOptions(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_GssStepInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_GssWrapInfo(QoreNamespace& ns);
@@ -72,6 +74,8 @@ extern QoreClass* QC_KRB5KEYTAB;
 extern qore_classid_t CID_KRB5KEYTAB;
 extern QoreClass* QC_KRB5PRINCIPAL;
 extern qore_classid_t CID_KRB5PRINCIPAL;
+extern QoreClass* QC_GSSACCEPTORCONTEXT;
+extern qore_classid_t CID_GSSACCEPTORCONTEXT;
 extern QoreClass* QC_GSSCLIENTCONTEXT;
 extern qore_classid_t CID_GSSCLIENTCONTEXT;
 extern QoreClass* QC_GSSCREDENTIAL;
@@ -80,6 +84,7 @@ extern qore_classid_t CID_GSSCREDENTIAL;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5KeytabEntryInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5CredentialsInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5InitialCredentialsOptions;
+DLLLOCAL extern TypedHashDecl* hashdeclGssAcceptorContextOptions;
 DLLLOCAL extern TypedHashDecl* hashdeclGssClientContextOptions;
 DLLLOCAL extern TypedHashDecl* hashdeclGssStepInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclGssWrapInfo;
@@ -139,6 +144,32 @@ public:
     DLLLOCAL ~QoreGssClientContext() override;
 
     DLLLOCAL QoreStringNode* getTargetName() const;
+    DLLLOCAL bool isComplete() const;
+    DLLLOCAL void reset();
+    DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* wrap(const char* message_hex, bool confidential, int qop, ExceptionSink* xsink);
+    DLLLOCAL QoreHashNode* unwrap(const char* token_hex, ExceptionSink* xsink);
+    DLLLOCAL int64 getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink);
+};
+
+class QoreGssAcceptorContext : public AbstractPrivateData {
+public:
+    gss_ctx_id_t ctx = GSS_C_NO_CONTEXT;
+    gss_name_t initiator_name = GSS_C_NO_NAME;
+    class QoreGssCredential* cred_ref = nullptr;
+    gss_channel_bindings_struct channel_bindings;
+    std::vector<unsigned char> channel_binding_initiator_address;
+    std::vector<unsigned char> channel_binding_acceptor_address;
+    std::vector<unsigned char> channel_binding_application_data;
+    bool has_channel_bindings = false;
+    bool complete = false;
+    std::string initiator_display;
+
+    DLLLOCAL QoreGssAcceptorContext(const QoreHashNode* opts, ExceptionSink* xsink);
+    DLLLOCAL QoreGssAcceptorContext(QoreGssCredential* cred, const QoreHashNode* opts, ExceptionSink* xsink);
+    DLLLOCAL ~QoreGssAcceptorContext() override;
+
+    DLLLOCAL QoreStringNode* getInitiatorName() const;
     DLLLOCAL bool isComplete() const;
     DLLLOCAL void reset();
     DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);

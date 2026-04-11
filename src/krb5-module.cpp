@@ -26,6 +26,7 @@
 */
 
 #include "krb5-module.h"
+#include "QC_GssAcceptorContext.h"
 #include "QC_GssClientContext.h"
 #include "QC_GssCredential.h"
 #include "QC_Krb5Context.h"
@@ -48,6 +49,7 @@ static QoreNamespace krb5ns("Qore::Krb5");
 TypedHashDecl* hashdeclKrb5KeytabEntryInfo = nullptr;
 TypedHashDecl* hashdeclKrb5CredentialsInfo = nullptr;
 TypedHashDecl* hashdeclKrb5InitialCredentialsOptions = nullptr;
+TypedHashDecl* hashdeclGssAcceptorContextOptions = nullptr;
 TypedHashDecl* hashdeclGssClientContextOptions = nullptr;
 TypedHashDecl* hashdeclGssStepInfo = nullptr;
 TypedHashDecl* hashdeclGssWrapInfo = nullptr;
@@ -459,18 +461,95 @@ bool QoreKrb5Principal::equals(const QoreKrb5Principal& other) const {
     return krb5_principal_compare(ctx, principal, other.principal);
 }
 
-class QoreGssClientContextOptions {
+class QoreGssChannelBindingOptions {
 public:
-    OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
-    OM_uint32 lifetime_req = 0;
-    gss_OID mech = gss_mech_krb5;
-    gss_OID name_type = GSS_KRB5_NT_PRINCIPAL_NAME;
     OM_uint32 initiator_addrtype = GSS_C_AF_NULLADDR;
     OM_uint32 acceptor_addrtype = GSS_C_AF_NULLADDR;
     std::vector<unsigned char> initiator_address;
     std::vector<unsigned char> acceptor_address;
     std::vector<unsigned char> application_data;
     bool has_channel_bindings = false;
+
+protected:
+    DLLLOCAL void parseChannelBindingOptions(const QoreHashNode* opts, ExceptionSink* xsink) {
+        parseAddrType(opts, "channel_binding_initiator_addrtype", initiator_addrtype, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseAddrType(opts, "channel_binding_acceptor_addrtype", acceptor_addrtype, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseHexOption(opts, "channel_binding_initiator_address_hex", initiator_address, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseHexOption(opts, "channel_binding_acceptor_address_hex", acceptor_address, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseHexOption(opts, "channel_binding_application_data_hex", application_data, xsink);
+        if (*xsink) {
+            return;
+        }
+        has_channel_bindings = !initiator_address.empty() || !acceptor_address.empty() || !application_data.empty();
+        if (!has_channel_bindings) {
+            if (initiator_addrtype != GSS_C_AF_NULLADDR || acceptor_addrtype != GSS_C_AF_NULLADDR) {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR", "channel-binding address types require address data");
+            }
+            return;
+        }
+        if ((initiator_addrtype == GSS_C_AF_NULLADDR) != initiator_address.empty()) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR",
+                "channel-binding initiator address requires a non-null address type and address data");
+            return;
+        }
+        if ((acceptor_addrtype == GSS_C_AF_NULLADDR) != acceptor_address.empty()) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR",
+                "channel-binding acceptor address requires a non-null address type and address data");
+        }
+    }
+
+private:
+    DLLLOCAL static void parseAddrType(const QoreHashNode* opts, const char* key, OM_uint32& value,
+            ExceptionSink* xsink) {
+        QoreValue v = opts->getKeyValue(key);
+        if (v.isNullOrNothing()) {
+            return;
+        }
+        int64 i = v.getAsBigInt();
+        if (i < 0 || i > UINT32_MAX) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' must be between 0 and %u", key, UINT32_MAX);
+            return;
+        }
+        value = (OM_uint32)i;
+    }
+
+    DLLLOCAL static void parseHexOption(const QoreHashNode* opts, const char* key, std::vector<unsigned char>& value,
+            ExceptionSink* xsink) {
+        QoreValue v = opts->getKeyValue(key);
+        if (v.isNullOrNothing()) {
+            return;
+        }
+
+        QoreStringValueHelper str(v, QCS_UTF8, xsink);
+        if (*xsink) {
+            return;
+        }
+        if (!str->c_str() || !*str->c_str()) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' cannot be empty", key);
+            return;
+        }
+        decode_hex(str->c_str(), value, xsink, "KRB5-GSS-ARG-ERROR", key);
+    }
+};
+
+class QoreGssClientContextOptions : public QoreGssChannelBindingOptions {
+public:
+    OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
+    OM_uint32 lifetime_req = 0;
+    gss_OID mech = gss_mech_krb5;
+    gss_OID name_type = GSS_KRB5_NT_PRINCIPAL_NAME;
 
     DLLLOCAL QoreGssClientContextOptions(const QoreHashNode* opts, ExceptionSink* xsink) {
         if (!opts) {
@@ -544,75 +623,7 @@ public:
             }
         }
 
-        parseAddrType(opts, "channel_binding_initiator_addrtype", initiator_addrtype, xsink);
-        if (*xsink) {
-            return;
-        }
-        parseAddrType(opts, "channel_binding_acceptor_addrtype", acceptor_addrtype, xsink);
-        if (*xsink) {
-            return;
-        }
-        parseHexOption(opts, "channel_binding_initiator_address_hex", initiator_address, xsink);
-        if (*xsink) {
-            return;
-        }
-        parseHexOption(opts, "channel_binding_acceptor_address_hex", acceptor_address, xsink);
-        if (*xsink) {
-            return;
-        }
-        parseHexOption(opts, "channel_binding_application_data_hex", application_data, xsink);
-        if (*xsink) {
-            return;
-        }
-        has_channel_bindings = !initiator_address.empty() || !acceptor_address.empty() || !application_data.empty();
-        if (!has_channel_bindings) {
-            if (initiator_addrtype != GSS_C_AF_NULLADDR || acceptor_addrtype != GSS_C_AF_NULLADDR) {
-                xsink->raiseException("KRB5-GSS-ARG-ERROR", "channel-binding address types require address data");
-            }
-            return;
-        }
-        if ((initiator_addrtype == GSS_C_AF_NULLADDR) != initiator_address.empty()) {
-            xsink->raiseException("KRB5-GSS-ARG-ERROR",
-                "channel-binding initiator address requires a non-null address type and address data");
-            return;
-        }
-        if ((acceptor_addrtype == GSS_C_AF_NULLADDR) != acceptor_address.empty()) {
-            xsink->raiseException("KRB5-GSS-ARG-ERROR",
-                "channel-binding acceptor address requires a non-null address type and address data");
-        }
-    }
-
-private:
-    DLLLOCAL static void parseAddrType(const QoreHashNode* opts, const char* key, OM_uint32& value,
-            ExceptionSink* xsink) {
-        QoreValue v = opts->getKeyValue(key);
-        if (v.isNullOrNothing()) {
-            return;
-        }
-        int64 i = v.getAsBigInt();
-        if (i < 0 || i > UINT32_MAX) {
-            xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' must be between 0 and %u", key, UINT32_MAX);
-            return;
-        }
-        value = (OM_uint32)i;
-    }
-
-    DLLLOCAL static void parseHexOption(const QoreHashNode* opts, const char* key, std::vector<unsigned char>& value,
-            ExceptionSink* xsink) {
-        QoreValue v = opts->getKeyValue(key);
-        if (v.isNullOrNothing()) {
-            return;
-        }
-
-        QoreStringValueHelper str(v, QCS_UTF8, xsink);
-        if (*xsink) {
-            return;
-        }
-        if (!str->c_str() || !*str->c_str()) {
-            xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' cannot be empty", key);
-            return;
-        }
-        decode_hex(str->c_str(), value, xsink, "KRB5-GSS-ARG-ERROR", key);
+        parseChannelBindingOptions(opts, xsink);
     }
 };
 
@@ -862,6 +873,276 @@ int64 QoreGssClientContext::getWrapSizeLimit(int64 output_size, bool confidentia
         (OM_uint32)output_size, &max_input_size);
     if (maj != GSS_S_COMPLETE) {
         gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "checking GSSAPI wrap size limit");
+        return 0;
+    }
+    return max_input_size;
+}
+
+class QoreGssAcceptorContextOptions : public QoreGssChannelBindingOptions {
+public:
+    DLLLOCAL QoreGssAcceptorContextOptions(const QoreHashNode* opts, ExceptionSink* xsink) {
+        if (!opts) {
+            return;
+        }
+        parseChannelBindingOptions(opts, xsink);
+    }
+};
+
+QoreGssAcceptorContext::QoreGssAcceptorContext(const QoreHashNode* opts, ExceptionSink* xsink)
+        : QoreGssAcceptorContext(nullptr, opts, xsink) {
+}
+
+QoreGssAcceptorContext::QoreGssAcceptorContext(QoreGssCredential* cred, const QoreHashNode* opts,
+        ExceptionSink* xsink) {
+    QoreGssAcceptorContextOptions parsed_opts(opts, xsink);
+    if (*xsink) {
+        return;
+    }
+
+    memset(&channel_bindings, 0, sizeof(channel_bindings));
+    if (parsed_opts.has_channel_bindings) {
+        has_channel_bindings = true;
+        channel_binding_initiator_address = parsed_opts.initiator_address;
+        channel_binding_acceptor_address = parsed_opts.acceptor_address;
+        channel_binding_application_data = parsed_opts.application_data;
+        channel_bindings.initiator_addrtype = parsed_opts.initiator_addrtype;
+        channel_bindings.acceptor_addrtype = parsed_opts.acceptor_addrtype;
+        channel_bindings.initiator_address.length = channel_binding_initiator_address.size();
+        channel_bindings.initiator_address.value = channel_binding_initiator_address.empty()
+            ? nullptr : channel_binding_initiator_address.data();
+        channel_bindings.acceptor_address.length = channel_binding_acceptor_address.size();
+        channel_bindings.acceptor_address.value = channel_binding_acceptor_address.empty()
+            ? nullptr : channel_binding_acceptor_address.data();
+        channel_bindings.application_data.length = channel_binding_application_data.size();
+        channel_bindings.application_data.value = channel_binding_application_data.empty()
+            ? nullptr : channel_binding_application_data.data();
+    }
+
+    if (cred) {
+        cred->ref();
+        cred_ref = cred;
+    }
+}
+
+QoreGssAcceptorContext::~QoreGssAcceptorContext() {
+    reset();
+    if (cred_ref) {
+        cred_ref->deref();
+        cred_ref = nullptr;
+    }
+}
+
+QoreStringNode* QoreGssAcceptorContext::getInitiatorName() const {
+    return initiator_display.empty() ? nullptr : new QoreStringNode(initiator_display.c_str());
+}
+
+bool QoreGssAcceptorContext::isComplete() const {
+    return complete;
+}
+
+void QoreGssAcceptorContext::reset() {
+    if (ctx != GSS_C_NO_CONTEXT) {
+        OM_uint32 min_stat = 0;
+        gss_delete_sec_context(&min_stat, &ctx, GSS_C_NO_BUFFER);
+        ctx = GSS_C_NO_CONTEXT;
+    }
+    if (initiator_name != GSS_C_NO_NAME) {
+        OM_uint32 min_stat = 0;
+        gss_release_name(&min_stat, &initiator_name);
+        initiator_name = GSS_C_NO_NAME;
+    }
+    initiator_display.clear();
+    complete = false;
+}
+
+QoreHashNode* QoreGssAcceptorContext::step(const char* token_hex, ExceptionSink* xsink) {
+    if (!token_hex || !*token_hex) {
+        xsink->raiseException("KRB5-TOKEN-ERROR", "GSSAPI acceptor input token cannot be empty");
+        return nullptr;
+    }
+
+    std::vector<unsigned char> input_bytes;
+    if (!decode_hex(token_hex, input_bytes, xsink, "decoding GSSAPI acceptor input token")) {
+        return nullptr;
+    }
+    if (input_bytes.empty()) {
+        xsink->raiseException("KRB5-TOKEN-ERROR", "decoding GSSAPI acceptor input token: token cannot be empty");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi context acceptance")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input_token = GSS_C_EMPTY_BUFFER;
+    input_token.value = input_bytes.data();
+    input_token.length = input_bytes.size();
+
+    gss_name_t src_name = GSS_C_NO_NAME;
+    gss_OID mech_type = GSS_C_NO_OID;
+    OM_uint32 actual_flags = 0;
+    OM_uint32 lifetime = 0;
+    GssBufferHolder output_token;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_accept_sec_context(&min_stat, &ctx, cred_ref ? cred_ref->cred : GSS_C_NO_CREDENTIAL,
+        &input_token, has_channel_bindings ? &channel_bindings : GSS_C_NO_CHANNEL_BINDINGS, &src_name,
+        &mech_type, &output_token.buf, &actual_flags, &lifetime, nullptr);
+
+    if (maj != GSS_S_COMPLETE && maj != GSS_S_CONTINUE_NEEDED) {
+        reset();
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "accepting GSSAPI security context");
+        return nullptr;
+    }
+
+    complete = maj == GSS_S_COMPLETE;
+
+    if (src_name != GSS_C_NO_NAME) {
+        GssBufferHolder display_name;
+        maj = gss_display_name(&min_stat, src_name, &display_name.buf, nullptr);
+        if (maj != GSS_S_COMPLETE) {
+            gss_release_name(&min_stat, &src_name);
+            reset();
+            gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "displaying GSSAPI initiator name");
+            return nullptr;
+        }
+
+        if (initiator_name != GSS_C_NO_NAME) {
+            gss_release_name(&min_stat, &initiator_name);
+        }
+        initiator_name = src_name;
+        initiator_display.assign(static_cast<const char*>(display_name.buf.value), display_name.buf.length);
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssStepInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    rv->setKeyValue("complete", complete, xsink);
+    rv->setKeyValue("flags", (int64)actual_flags, xsink);
+    rv->setKeyValue("lifetime", (int64)lifetime, xsink);
+    if (output_token.buf.length) {
+        rv->setKeyValue("token",
+            encode_hex(static_cast<const unsigned char*>(output_token.buf.value), output_token.buf.length), xsink);
+    } else {
+        rv->setKeyValue("token", QoreValue(), xsink);
+    }
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreHashNode* QoreGssAcceptorContext::wrap(const char* message_hex, bool confidential, int qop,
+        ExceptionSink* xsink) {
+    std::vector<unsigned char> message_bytes;
+    if (!decode_hex(message_hex, message_bytes, xsink, "decoding GSSAPI acceptor wrap message")) {
+        return nullptr;
+    }
+    if (qop < 0) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "qop value cannot be negative");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi acceptor message wrapping")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input = GSS_C_EMPTY_BUFFER;
+    input.value = message_bytes.empty() ? nullptr : message_bytes.data();
+    input.length = message_bytes.size();
+
+    int conf_state = 0;
+    GssBufferHolder output;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_wrap(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop, &input, &conf_state, &output.buf);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "wrapping GSSAPI acceptor message");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssWrapInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    rv->setKeyValue("token",
+        encode_hex(static_cast<const unsigned char*>(output.buf.value), output.buf.length), xsink);
+    rv->setKeyValue("confidential", conf_state ? true : false, xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+QoreHashNode* QoreGssAcceptorContext::unwrap(const char* token_hex, ExceptionSink* xsink) {
+    std::vector<unsigned char> token_bytes;
+    if (!decode_hex(token_hex, token_bytes, xsink, "decoding GSSAPI acceptor wrapped token")) {
+        return nullptr;
+    }
+    if (token_bytes.empty()) {
+        xsink->raiseException("KRB5-TOKEN-ERROR", "decoding GSSAPI acceptor wrapped token: token cannot be empty");
+        return nullptr;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "gssapi acceptor message unwrapping")) {
+        return nullptr;
+    }
+
+    gss_buffer_desc input = GSS_C_EMPTY_BUFFER;
+    input.value = token_bytes.data();
+    input.length = token_bytes.size();
+
+    int conf_state = 0;
+    gss_qop_t qop_state = 0;
+    GssBufferHolder output;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_unwrap(&min_stat, ctx, &input, &output.buf, &conf_state, &qop_state);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "unwrapping GSSAPI acceptor message");
+        return nullptr;
+    }
+
+    ReferenceHolder<QoreHashNode> rv(new QoreHashNode(hashdeclGssUnwrapInfo, xsink), xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    rv->setKeyValue("message",
+        encode_hex(static_cast<const unsigned char*>(output.buf.value), output.buf.length), xsink);
+    rv->setKeyValue("confidential", conf_state ? true : false, xsink);
+    rv->setKeyValue("qop", (int64)qop_state, xsink);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+}
+
+int64 QoreGssAcceptorContext::getWrapSizeLimit(int64 output_size, bool confidential, int qop, ExceptionSink* xsink) {
+    if (output_size < 0 || output_size > UINT32_MAX) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "output size must be between 0 and %u bytes", UINT32_MAX);
+        return 0;
+    }
+    if (qop < 0) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "qop value cannot be negative");
+        return 0;
+    }
+    if (ctx == GSS_C_NO_CONTEXT || !complete) {
+        xsink->raiseException("KRB5-GSS-STATE-ERROR", "GSSAPI context is not complete");
+        return 0;
+    }
+    if (qore_check_cancel(xsink, "checking GSSAPI acceptor wrap size limit")) {
+        return 0;
+    }
+
+    OM_uint32 max_input_size = 0;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_wrap_size_limit(&min_stat, ctx, confidential ? 1 : 0, (gss_qop_t)qop,
+        (OM_uint32)output_size, &max_input_size);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "checking GSSAPI acceptor wrap size limit");
         return 0;
     }
     return max_input_size;
@@ -1863,6 +2144,7 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     hashdeclKrb5KeytabEntryInfo = init_hashdecl_Krb5KeytabEntryInfo(krb5ns);
     hashdeclKrb5CredentialsInfo = init_hashdecl_Krb5CredentialsInfo(krb5ns);
     hashdeclKrb5InitialCredentialsOptions = init_hashdecl_Krb5InitialCredentialsOptions(krb5ns);
+    hashdeclGssAcceptorContextOptions = init_hashdecl_GssAcceptorContextOptions(krb5ns);
     hashdeclGssClientContextOptions = init_hashdecl_GssClientContextOptions(krb5ns);
     hashdeclGssStepInfo = init_hashdecl_GssStepInfo(krb5ns);
     hashdeclGssWrapInfo = init_hashdecl_GssWrapInfo(krb5ns);
@@ -1875,6 +2157,7 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addSystemClass(initKrb5ContextClass(krb5ns));
     krb5ns.addSystemClass(initGssCredentialClass(krb5ns));
     krb5ns.addSystemClass(initGssClientContextClass(krb5ns));
+    krb5ns.addSystemClass(initGssAcceptorContextClass(krb5ns));
 }
 
 static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink) {

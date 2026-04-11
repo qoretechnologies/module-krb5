@@ -52,6 +52,13 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("gss context name type options", \testGssContextNameTypeOptions());
         addTestCase("gss context channel binding options", \testGssContextChannelBindingOptions());
         addTestCase("gss context invalid options", \testGssContextInvalidOptions());
+        addTestCase("gss acceptor setup", \testGssAcceptorSetup());
+        addTestCase("gss acceptor channel binding options", \testGssAcceptorChannelBindingOptions());
+        addTestCase("gss acceptor invalid options", \testGssAcceptorInvalidOptions());
+        addTestCase("gss acceptor credential from keytab", \testGssAcceptorCredentialFromKeytab());
+        addTestCase("gss acceptor invalid token hex", \testGssAcceptorInvalidHex());
+        addTestCase("gss acceptor empty token rejected", \testGssAcceptorEmptyTokenRejected());
+        addTestCase("gss acceptor wrap incomplete context", \testGssAcceptorWrapIncompleteContext());
         addTestCase("gss credential from keytab", \testGssCredentialFromKeytab());
         addTestCase("gss credential empty cache rejected", \testGssCredentialEmptyCacheRejected());
         addTestCase("gss credential empty keytab rejected", \testGssCredentialEmptyKeytabRejected());
@@ -71,6 +78,8 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testAcquireCredentialsWithKeytabRequiresNetworkDomain());
         addTestCase("gss client context requires NETWORK domain",
             \testGssClientContextRequiresNetworkDomain());
+        addTestCase("gss acceptor context requires NETWORK domain",
+            \testGssAcceptorContextRequiresNetworkDomain());
         addTestCase("gss credential import requires FILESYSTEM domain",
             \testGssCredentialRequiresFilesystemDomain());
         addTestCase("krb5 credentials class carries no default domain",
@@ -697,6 +706,86 @@ public class Krb5ModuleTest inherits QUnit::Test {
         });
     }
 
+    private testGssAcceptorSetup() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertFalse(ctx.isComplete());
+        assertEq(NOTHING, ctx.getInitiatorName());
+    }
+
+    private testGssAcceptorChannelBindingOptions() {
+        hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+        opts.channel_binding_initiator_addrtype = Qore::Krb5::GSS_AF_NULLADDR;
+        opts.channel_binding_acceptor_addrtype = Qore::Krb5::GSS_AF_INET;
+        opts.channel_binding_acceptor_address_hex = "7f000001";
+        opts.channel_binding_application_data_hex = "746c732d7365727665722d656e642d706f696e743a00112233";
+
+        Qore::Krb5::GssAcceptorContext ctx(opts);
+        assertFalse(ctx.isComplete());
+        assertEq(NOTHING, ctx.getInitiatorName());
+    }
+
+    private testGssAcceptorInvalidOptions() {
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+            opts.channel_binding_application_data_hex = "abc";
+            Qore::Krb5::GssAcceptorContext bad(opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+            opts.channel_binding_application_data_hex = "";
+            Qore::Krb5::GssAcceptorContext bad(opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+            opts.channel_binding_acceptor_addrtype = Qore::Krb5::GSS_AF_INET;
+            Qore::Krb5::GssAcceptorContext bad(opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssAcceptorContextOptions> opts();
+            opts.channel_binding_acceptor_address_hex = "7f000001";
+            Qore::Krb5::GssAcceptorContext bad(opts);
+        });
+    }
+
+    private testGssAcceptorCredentialFromKeytab() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-gss-acceptor-keytab");
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+
+        auto cred = Qore::Krb5::GssCredential::fromKeytab(kt, p);
+        Qore::Krb5::GssAcceptorContext acceptor(cred);
+        assertFalse(acceptor.isComplete());
+        assertEq(NOTHING, acceptor.getInitiatorName());
+    }
+
+    private testGssAcceptorInvalidHex() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.step("xyz");
+        });
+    }
+
+    private testGssAcceptorEmptyTokenRejected() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.step("");
+        });
+    }
+
+    private testGssAcceptorWrapIncompleteContext() {
+        Qore::Krb5::GssAcceptorContext ctx();
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.wrap("00");
+        });
+        assertThrows("KRB5-GSS-STATE-ERROR", sub() {
+            ctx.getWrapSizeLimit(128);
+        });
+        assertThrows("KRB5-TOKEN-ERROR", sub() {
+            ctx.unwrap("");
+        });
+    }
+
     private testGssCredentialFromKeytab() {
         Qore::Krb5::Krb5Context ctx();
         auto kt = ctx.openKeytab("MEMORY:module-krb5-gss-keytab");
@@ -884,6 +973,19 @@ public class Krb5ModuleTest inherits QUnit::Test {
                     ctx.step();
                 }
             ", "no_network_gss_step");
+        });
+    }
+
+    private testGssAcceptorContextRequiresNetworkDomain() {
+        Program p(PO_MODERN | PO_NO_NETWORK);
+        p.loadModule("krb5");
+        assertThrows("ILLEGAL-CLASS-INSTANTIATION", sub() {
+            p.parse("
+                nothing sub test_gss_acceptor_network_blocked() {
+                    Qore::Krb5::GssAcceptorContext ctx();
+                    ctx.step(\"00\");
+                }
+            ", "no_network_gss_acceptor_step");
         });
     }
 

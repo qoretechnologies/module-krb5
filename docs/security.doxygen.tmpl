@@ -65,6 +65,10 @@
       @ref Qore::Krb5::GssClientContext::unwrap() for SASL/GSSAPI
       integrity and confidentiality layers when enterprise policy requires
       message-level protection.
+    - Service endpoints can use @ref Qore::Krb5::GssAcceptorContext with an
+      explicit keytab-backed @ref Qore::Krb5::GssCredential, avoiding
+      process-global acceptor credential selection and exposing the
+      authenticated initiator principal after negotiation.
 
     @section krb5sec_sandbox Filesystem Sandbox
 
@@ -91,8 +95,9 @@
       keytab files.
     - @ref Qore::Krb5::Krb5Context::acquireCredentialsWithPassword(),
       @ref Qore::Krb5::Krb5Context::acquireCredentialsWithKeytab(), and the
-      entire @ref Qore::Krb5::GssClientContext class carry the \c NETWORK
-      domain because they contact the KDC.
+      entire @ref Qore::Krb5::GssClientContext and
+      @ref Qore::Krb5::GssAcceptorContext classes carry the \c NETWORK
+      domain because their GSSAPI mechanisms may contact the KDC.
     - @ref Qore::Krb5::Krb5Principal and @ref Qore::Krb5::Krb5Credentials
       carry no functional domain because they operate purely on in-memory
       data.

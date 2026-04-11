@@ -26,6 +26,9 @@ The module provides:
   default credentials
 - Initiator-side GSSAPI security contexts with configurable flags, lifetime,
   mechanism selection, and explicit target-name type selection
+- Acceptor-side GSSAPI security contexts for service endpoints, including
+  explicit service-keytab credentials and authenticated initiator-name
+  reporting
 - GSSAPI channel bindings, including RFC 5929 `tls-server-end-point`
   application data for hardened SASL/GSSAPI deployments
 - GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity

@@ -34,6 +34,7 @@ set(QPP_SRC
     src/QC_Krb5Principal.qpp
     src/QC_GssCredential.qpp
     src/QC_GssClientContext.qpp
+    src/QC_GssAcceptorContext.qpp
 )
 
 set(CPP_SRC
