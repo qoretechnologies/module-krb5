@@ -5,6 +5,8 @@
     - Initial credential acquisition supports FAST armor cache configuration.
     - Initial credential acquisition supports explicit enctype requests.
     - GSSAPI token inputs are validated before decoding.
+    - GSSAPI initiator contexts default to the Kerberos mechanism.
+    - GSSAPI contexts can use explicit credentials instead of process-global defaults.
     - Credential metadata APIs do not expose session-key or ticket bytes.
     - File-backed credential caches and keytabs honor Qore filesystem sandboxing.
     - Acquisition operations check cooperative cancellation before blocking calls.

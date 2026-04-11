@@ -33,6 +33,7 @@
 #include <qore/qore_thread.h>
 
 #include <gssapi/gssapi.h>
+#include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
 
 #include <string>
@@ -48,11 +49,13 @@ DLLLOCAL QoreClass* initKrb5CredentialsClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5CredentialCacheClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5KeytabClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initKrb5PrincipalClass(QoreNamespace& ns);
+DLLLOCAL QoreClass* initGssCredentialClass(QoreNamespace& ns);
 DLLLOCAL QoreClass* initGssClientContextClass(QoreNamespace& ns);
 
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5KeytabEntryInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5CredentialsInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5InitialCredentialsOptions(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssClientContextOptions(QoreNamespace& ns);
 
 extern QoreClass* QC_KRB5CONTEXT;
 extern qore_classid_t CID_KRB5CONTEXT;
@@ -66,10 +69,13 @@ extern QoreClass* QC_KRB5PRINCIPAL;
 extern qore_classid_t CID_KRB5PRINCIPAL;
 extern QoreClass* QC_GSSCLIENTCONTEXT;
 extern qore_classid_t CID_GSSCLIENTCONTEXT;
+extern QoreClass* QC_GSSCREDENTIAL;
+extern qore_classid_t CID_GSSCREDENTIAL;
 
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5KeytabEntryInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5CredentialsInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5InitialCredentialsOptions;
+DLLLOCAL extern TypedHashDecl* hashdeclGssClientContextOptions;
 
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);
@@ -79,6 +85,9 @@ DLLLOCAL QoreStringNode* encode_hex(const unsigned char* ptr, size_t len);
 DLLLOCAL bool krb5_is_empty_cache_error(krb5_error_code rc);
 DLLLOCAL QoreStringNode* krb5_unparse_principal(krb5_context ctx, krb5_const_principal principal, ExceptionSink* xsink,
     const char* err, const char* context);
+
+class QoreKrb5CredentialCache;
+class QoreKrb5Keytab;
 
 class QoreKrb5Principal : public AbstractPrivateData {
 public:
@@ -102,18 +111,33 @@ class QoreGssClientContext : public AbstractPrivateData {
 public:
     gss_ctx_id_t ctx = GSS_C_NO_CONTEXT;
     gss_name_t target_name = GSS_C_NO_NAME;
+    class QoreGssCredential* cred_ref = nullptr;
     gss_OID mech = GSS_C_NO_OID;
     OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
+    OM_uint32 lifetime_req = 0;
     bool complete = false;
     std::string target_display;
 
-    DLLLOCAL explicit QoreGssClientContext(const char* service_principal, ExceptionSink* xsink);
+    DLLLOCAL QoreGssClientContext(const char* service_principal, const QoreHashNode* opts,
+        ExceptionSink* xsink);
+    DLLLOCAL QoreGssClientContext(const char* service_principal, QoreGssCredential* cred,
+        const QoreHashNode* opts, ExceptionSink* xsink);
     DLLLOCAL ~QoreGssClientContext() override;
 
     DLLLOCAL QoreStringNode* getTargetName() const;
     DLLLOCAL bool isComplete() const;
     DLLLOCAL void reset();
     DLLLOCAL QoreHashNode* step(const char* token_hex, ExceptionSink* xsink);
+};
+
+class QoreGssCredential : public AbstractPrivateData {
+public:
+    gss_cred_id_t cred = GSS_C_NO_CREDENTIAL;
+
+    DLLLOCAL QoreGssCredential(const QoreKrb5CredentialCache& cache, ExceptionSink* xsink);
+    DLLLOCAL QoreGssCredential(const QoreKrb5Keytab& keytab, const QoreKrb5Principal* principal,
+        ExceptionSink* xsink);
+    DLLLOCAL ~QoreGssCredential() override;
 };
 
 class QoreKrb5CredentialCache : public AbstractPrivateData {

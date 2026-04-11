@@ -35,12 +35,63 @@
 */
 qclass GssClientContext [arg=QoreGssClientContext* ctx; ns=Qore::Krb5; flags=final];
 
+//! Options for GSSAPI initiator contexts
+/** @since krb5 0.1
+*/
+hashdecl Qore::Krb5::GssClientContextOptions {
+    //! Requested GSS flags bitmask; omit for the secure module default
+    *int flags;
+
+    //! Requested security-context lifetime in seconds; 0 means default
+    *int lifetime;
+
+    //! Mechanism selector; supported values are \c "kerberos" and \c "default"
+    *string mechanism;
+}
+
 //! Creates an initiator-side GSSAPI context for the given service principal
 /** @param service_principal a host-based service principal such as
     \c "HTTP/qorus.example.com@EXAMPLE.COM"
 */
 GssClientContext::constructor(string service_principal) {
-    SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), xsink));
+    SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), nullptr, xsink));
+    if (*xsink) {
+        return;
+    }
+    self->setPrivate(CID_GSSCLIENTCONTEXT, c.release());
+}
+
+//! Creates an initiator-side GSSAPI context with explicit options
+/**
+*/
+GssClientContext::constructor(string service_principal, hash<GssClientContextOptions> opts) {
+    SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), opts, xsink));
+    if (*xsink) {
+        return;
+    }
+    self->setPrivate(CID_GSSCLIENTCONTEXT, c.release());
+}
+
+//! Creates an initiator-side GSSAPI context bound to explicit credentials
+/** @param service_principal a host-based service principal
+    @param cred explicit GSSAPI credential
+*/
+GssClientContext::constructor(string service_principal, GssCredential[QoreGssCredential] cred) {
+    SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), *cred,
+        nullptr, xsink));
+    if (*xsink) {
+        return;
+    }
+    self->setPrivate(CID_GSSCLIENTCONTEXT, c.release());
+}
+
+//! Creates an initiator-side GSSAPI context bound to explicit credentials and options
+/**
+*/
+GssClientContext::constructor(string service_principal, GssCredential[QoreGssCredential] cred,
+        hash<GssClientContextOptions> opts) {
+    SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), *cred,
+        opts, xsink));
     if (*xsink) {
         return;
     }

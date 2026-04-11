@@ -16,8 +16,9 @@
     - filesystem sandbox enforcement for file-backed credential caches
     - filesystem sandbox enforcement for file-backed keytabs
     - Kerberos principal parsing, enterprise principal parsing, and validation
+    - explicit GSSAPI credential import from Kerberos caches and client keytabs
     - GSSAPI target-name handling
-    - initiator-side GSSAPI token stepping
+    - initiator-side GSSAPI token stepping with configurable flags and mechanisms
 
     @section krb5securitymodel Security Model
 
@@ -25,7 +26,9 @@
     used with strict TLS, Kerberos, and Active Directory integrations without
     weakening enterprise security policies. Initial credential acquisition
     supports noninteractive service use, KDC canonicalization, PAC requests,
-    enctype restrictions, and FAST armor credential caches.
+    enctype restrictions, and FAST armor credential caches. GSSAPI initiator
+    contexts can be bound to explicit credentials to avoid global default-cache
+    assumptions in service processes.
 
     @section krb5classes Main Classes
 
@@ -34,5 +37,6 @@
     - @ref Qore::Krb5::Krb5CredentialCache
     - @ref Qore::Krb5::Krb5Keytab
     - @ref Qore::Krb5::Krb5Principal
+    - @ref Qore::Krb5::GssCredential
     - @ref Qore::Krb5::GssClientContext
 */

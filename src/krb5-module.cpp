@@ -27,6 +27,7 @@
 
 #include "krb5-module.h"
 #include "QC_GssClientContext.h"
+#include "QC_GssCredential.h"
 #include "QC_Krb5Context.h"
 #include "QC_Krb5Credentials.h"
 #include "QC_Krb5CredentialCache.h"
@@ -37,14 +38,17 @@
 
 #include <cctype>
 #include <climits>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <strings.h>
 
 static QoreNamespace krb5ns("Qore::Krb5");
 
 TypedHashDecl* hashdeclKrb5KeytabEntryInfo = nullptr;
 TypedHashDecl* hashdeclKrb5CredentialsInfo = nullptr;
 TypedHashDecl* hashdeclKrb5InitialCredentialsOptions = nullptr;
+TypedHashDecl* hashdeclGssClientContextOptions = nullptr;
 
 static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink);
 static void krb5_module_ns_init(QoreNamespace* rns, QoreNamespace* qns, ExceptionSink& xsink);
@@ -352,11 +356,80 @@ bool QoreKrb5Principal::equals(const QoreKrb5Principal& other) const {
     return krb5_principal_compare(ctx, principal, other.principal);
 }
 
-QoreGssClientContext::QoreGssClientContext(const char* service_principal, ExceptionSink* xsink) {
+class QoreGssClientContextOptions {
+public:
+    OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
+    OM_uint32 lifetime_req = 0;
+    gss_OID mech = gss_mech_krb5;
+
+    DLLLOCAL QoreGssClientContextOptions(const QoreHashNode* opts, ExceptionSink* xsink) {
+        if (!opts) {
+            return;
+        }
+
+        QoreValue v = opts->getKeyValue("flags");
+        if (!v.isNullOrNothing()) {
+            int64 flags = v.getAsBigInt();
+            if (flags < 0 || flags > UINT32_MAX) {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR", "option 'flags' must be between 0 and %u", UINT32_MAX);
+                return;
+            }
+            req_flags = (OM_uint32)flags;
+        }
+
+        v = opts->getKeyValue("lifetime");
+        if (!v.isNullOrNothing()) {
+            int64 lifetime = v.getAsBigInt();
+            if (lifetime < 0 || lifetime > UINT32_MAX) {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR", "option 'lifetime' must be between 0 and %u",
+                    UINT32_MAX);
+                return;
+            }
+            lifetime_req = (OM_uint32)lifetime;
+        }
+
+        v = opts->getKeyValue("mechanism");
+        if (!v.isNullOrNothing()) {
+            QoreStringValueHelper mechanism(v, QCS_UTF8, xsink);
+            if (*xsink) {
+                return;
+            }
+            if (!mechanism->c_str() || !*mechanism->c_str()) {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR", "option 'mechanism' cannot be empty");
+                return;
+            }
+            if (!strcasecmp(mechanism->c_str(), "kerberos")) {
+                mech = gss_mech_krb5;
+            } else if (!strcasecmp(mechanism->c_str(), "default")) {
+                mech = GSS_C_NO_OID;
+            } else {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR",
+                    "unsupported GSSAPI mechanism '%s'; supported values are 'kerberos' and 'default'",
+                    mechanism->c_str());
+                return;
+            }
+        }
+    }
+};
+
+QoreGssClientContext::QoreGssClientContext(const char* service_principal, const QoreHashNode* opts,
+        ExceptionSink* xsink) : QoreGssClientContext(service_principal, nullptr, opts, xsink) {
+}
+
+QoreGssClientContext::QoreGssClientContext(const char* service_principal, QoreGssCredential* cred,
+        const QoreHashNode* opts, ExceptionSink* xsink) {
     if (!service_principal || !*service_principal) {
         xsink->raiseException("KRB5-GSS-ARG-ERROR", "service principal cannot be empty");
         return;
     }
+
+    QoreGssClientContextOptions parsed_opts(opts, xsink);
+    if (*xsink) {
+        return;
+    }
+    req_flags = parsed_opts.req_flags;
+    lifetime_req = parsed_opts.lifetime_req;
+    mech = parsed_opts.mech;
 
     OM_uint32 min_stat = 0;
     gss_buffer_desc namebuf;
@@ -369,6 +442,11 @@ QoreGssClientContext::QoreGssClientContext(const char* service_principal, Except
     }
 
     target_display = service_principal;
+
+    if (cred) {
+        cred->ref();
+        cred_ref = cred;
+    }
 }
 
 QoreGssClientContext::~QoreGssClientContext() {
@@ -376,6 +454,10 @@ QoreGssClientContext::~QoreGssClientContext() {
     if (target_name != GSS_C_NO_NAME) {
         OM_uint32 min_stat = 0;
         gss_release_name(&min_stat, &target_name);
+    }
+    if (cred_ref) {
+        cred_ref->deref();
+        cred_ref = nullptr;
     }
 }
 
@@ -415,9 +497,9 @@ QoreHashNode* QoreGssClientContext::step(const char* token_hex, ExceptionSink* x
     OM_uint32 lifetime = 0;
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
     OM_uint32 min_stat = 0;
-    OM_uint32 maj = gss_init_sec_context(&min_stat, GSS_C_NO_CREDENTIAL, &ctx, target_name, mech,
-        req_flags, 0, GSS_C_NO_CHANNEL_BINDINGS, input_token.length ? &input_token : GSS_C_NO_BUFFER, nullptr,
-        &output_token, &actual_flags, &lifetime);
+    OM_uint32 maj = gss_init_sec_context(&min_stat, cred_ref ? cred_ref->cred : GSS_C_NO_CREDENTIAL, &ctx,
+        target_name, mech, req_flags, lifetime_req, GSS_C_NO_CHANNEL_BINDINGS,
+        input_token.length ? &input_token : GSS_C_NO_BUFFER, nullptr, &output_token, &actual_flags, &lifetime);
 
     if (maj != GSS_S_COMPLETE && maj != GSS_S_CONTINUE_NEEDED) {
         reset();
@@ -436,6 +518,43 @@ QoreHashNode* QoreGssClientContext::step(const char* token_hex, ExceptionSink* x
     }
     gss_release_buffer(&min_stat, &output_token);
     return rv.release();
+}
+
+QoreGssCredential::QoreGssCredential(const QoreKrb5CredentialCache& cache, ExceptionSink* xsink) {
+    if (!krb5_check_cache_access(cache.ctx, cache.cache, QSEC_READ, xsink, "importing GSSAPI credential from cache")) {
+        return;
+    }
+
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_krb5_import_cred(&min_stat, cache.cache, nullptr, nullptr, &cred);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat,
+            "importing GSSAPI credential from credential cache");
+        return;
+    }
+}
+
+QoreGssCredential::QoreGssCredential(const QoreKrb5Keytab& keytab, const QoreKrb5Principal* principal,
+        ExceptionSink* xsink) {
+    if (!krb5_check_keytab_access(keytab.ctx, keytab.keytab, QSEC_READ, xsink,
+            "importing GSSAPI credential from keytab")) {
+        return;
+    }
+
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_krb5_import_cred(&min_stat, nullptr, principal ? principal->principal : nullptr,
+        keytab.keytab, &cred);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "importing GSSAPI credential from keytab");
+        return;
+    }
+}
+
+QoreGssCredential::~QoreGssCredential() {
+    if (cred != GSS_C_NO_CREDENTIAL) {
+        OM_uint32 min_stat = 0;
+        gss_release_cred(&min_stat, &cred);
+    }
 }
 
 QoreKrb5CredentialCache::QoreKrb5CredentialCache(const char* cache_name, bool use_default, ExceptionSink* xsink) {
@@ -1369,6 +1488,14 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("GSS_SEQUENCE_FLAG", (int64)GSS_C_SEQUENCE_FLAG);
     krb5ns.addConstant("GSS_INTEG_FLAG", (int64)GSS_C_INTEG_FLAG);
     krb5ns.addConstant("GSS_CONF_FLAG", (int64)GSS_C_CONF_FLAG);
+    krb5ns.addConstant("GSS_DELEG_FLAG", (int64)GSS_C_DELEG_FLAG);
+    krb5ns.addConstant("GSS_REPLAY_FLAG", (int64)GSS_C_REPLAY_FLAG);
+    krb5ns.addConstant("GSS_ANON_FLAG", (int64)GSS_C_ANON_FLAG);
+    krb5ns.addConstant("GSS_DEFAULT_FLAGS",
+        (int64)(GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG));
+    krb5ns.addConstant("GSS_CRED_USAGE_INITIATE", (int64)GSS_C_INITIATE);
+    krb5ns.addConstant("GSS_CRED_USAGE_ACCEPT", (int64)GSS_C_ACCEPT);
+    krb5ns.addConstant("GSS_CRED_USAGE_BOTH", (int64)GSS_C_BOTH);
     krb5ns.addConstant("ENCTYPE_AES128_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES128_CTS_HMAC_SHA1_96);
     krb5ns.addConstant("ENCTYPE_AES256_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES256_CTS_HMAC_SHA1_96);
 #ifdef ENCTYPE_AES128_CTS_HMAC_SHA256_128
@@ -1381,12 +1508,14 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     hashdeclKrb5KeytabEntryInfo = init_hashdecl_Krb5KeytabEntryInfo(krb5ns);
     hashdeclKrb5CredentialsInfo = init_hashdecl_Krb5CredentialsInfo(krb5ns);
     hashdeclKrb5InitialCredentialsOptions = init_hashdecl_Krb5InitialCredentialsOptions(krb5ns);
+    hashdeclGssClientContextOptions = init_hashdecl_GssClientContextOptions(krb5ns);
 
     krb5ns.addSystemClass(initKrb5PrincipalClass(krb5ns));
     krb5ns.addSystemClass(initKrb5CredentialsClass(krb5ns));
     krb5ns.addSystemClass(initKrb5CredentialCacheClass(krb5ns));
     krb5ns.addSystemClass(initKrb5KeytabClass(krb5ns));
     krb5ns.addSystemClass(initKrb5ContextClass(krb5ns));
+    krb5ns.addSystemClass(initGssCredentialClass(krb5ns));
     krb5ns.addSystemClass(initGssClientContextClass(krb5ns));
 }
 

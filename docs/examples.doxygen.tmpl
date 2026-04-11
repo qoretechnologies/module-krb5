@@ -20,9 +20,32 @@ printf("enterprise component: %s\n", upn.getComponent(0));
 %modern
 %requires krb5
 
-GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
+hash<Qore::Krb5::GssClientContextOptions> opts();
+opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG;
+opts.mechanism = "kerberos";
+
+GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
 hash<auto> step = ctx.step();
 printf("complete: %y token: %y\n", step.complete, step.token);
+    @endcode
+
+    @section krb5examples_gss_explicit_credential GSSAPI with an Explicit Credential
+
+    @code{.qore}
+%modern
+%requires krb5
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal service("HTTP/qorus.example.com@EXAMPLE.COM");
+Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:/etc/qorus/qorus.keytab");
+Qore::Krb5::GssCredential cred = Qore::Krb5::GssCredential::fromKeytab(kt, service);
+
+hash<Qore::Krb5::GssClientContextOptions> opts();
+opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG;
+opts.mechanism = "kerberos";
+
+Qore::Krb5::GssClientContext gss("LDAP/ad.example.com@EXAMPLE.COM", cred, opts);
+hash<auto> token = gss.step();
     @endcode
 
     @section krb5examples_keytab Memory Keytab Setup

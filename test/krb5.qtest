@@ -34,6 +34,13 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("initial credentials keytab sandbox deny", \testInitialCredentialsKeytabSandboxDeny());
         addTestCase("initial credentials FAST cache sandbox deny", \testInitialCredentialsFastCacheSandboxDeny());
         addTestCase("gss target setup", \testGssTargetSetup());
+        addTestCase("gss context options", \testGssContextOptions());
+        addTestCase("gss context invalid options", \testGssContextInvalidOptions());
+        addTestCase("gss credential from keytab", \testGssCredentialFromKeytab());
+        addTestCase("gss credential empty cache rejected", \testGssCredentialEmptyCacheRejected());
+        addTestCase("gss credential empty keytab rejected", \testGssCredentialEmptyKeytabRejected());
+        addTestCase("gss credential cache sandbox deny", \testGssCredentialCacheSandboxDeny());
+        addTestCase("gss credential keytab sandbox deny", \testGssCredentialKeytabSandboxDeny());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
     }
@@ -492,6 +499,129 @@ class Krb5ModuleTest inherits QUnit::Test {
         Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM");
         assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
         assertFalse(ctx.isComplete());
+    }
+
+    private testGssContextOptions() {
+        hash<Qore::Krb5::GssClientContextOptions> opts();
+        opts.flags = Qore::Krb5::GSS_MUTUAL_FLAG | Qore::Krb5::GSS_SEQUENCE_FLAG | Qore::Krb5::GSS_INTEG_FLAG;
+        opts.lifetime = 600;
+        opts.mechanism = "kerberos";
+
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+        assertFalse(ctx.isComplete());
+
+        opts.mechanism = "default";
+        Qore::Krb5::GssClientContext ctx2("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx2.getTargetName());
+    }
+
+    private testGssContextInvalidOptions() {
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.mechanism = "";
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.mechanism = "ntlm";
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.lifetime = -1;
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+    }
+
+    private testGssCredentialFromKeytab() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-gss-keytab");
+        Qore::Krb5::Krb5Principal p("HTTP/qorus.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+
+        auto cred = Qore::Krb5::GssCredential::fromKeytab(kt, p);
+        hash<Qore::Krb5::GssClientContextOptions> opts();
+        opts.mechanism = "kerberos";
+        Qore::Krb5::GssClientContext gss("HTTP/qorus.example.com@EXAMPLE.COM", cred, opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", gss.getTargetName());
+        assertFalse(gss.isComplete());
+    }
+
+    private testGssCredentialEmptyCacheRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal p("alice@EXAMPLE.COM");
+        auto cc = ctx.createMemoryCredentialCache(p, "module-krb5-empty-gss-cache");
+        assertThrows("KRB5-GSS-ERROR", sub() {
+            Qore::Krb5::GssCredential::fromCredentialCache(cc);
+        });
+    }
+
+    private testGssCredentialEmptyKeytabRejected() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-empty-gss-keytab");
+        assertThrows("KRB5-GSS-ERROR", sub() {
+            Qore::Krb5::GssCredential::fromKeytab(kt);
+        });
+    }
+
+    private testGssCredentialCacheSandboxDeny() {
+        string cachePath = getSandboxCachePath("gss-cache-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_gss_cache() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                auto cc = ctx.openCredentialCache(\"FILE:%s\");
+                Qore::Krb5::GssCredential::fromCredentialCache(cc);
+            }
+        ", cachePath), "sandbox_denied_gss_cache");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        bool caught = False;
+        try {
+            p.callFunction("test_denied_gss_cache");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err);
+        }
+        assertTrue(caught);
+        cleanupSandboxCache(cachePath);
+    }
+
+    private testGssCredentialKeytabSandboxDeny() {
+        string keytabPath = getSandboxKeytabPath("gss-keytab-deny");
+        cleanupSandboxKeytab(keytabPath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_gss_keytab() {
+                Qore::Krb5::Krb5Context ctx();
+                auto kt = ctx.openKeytab(\"FILE:%s\");
+                Qore::Krb5::GssCredential::fromKeytab(kt);
+            }
+        ", keytabPath), "sandbox_denied_gss_keytab");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        bool caught = False;
+        try {
+            p.callFunction("test_denied_gss_keytab");
+        } catch (hash<ExceptionInfo> ex) {
+            caught = True;
+            assertEq("FILESYSTEM-ACCESS-DENIED", ex.err);
+        }
+        assertTrue(caught);
+        cleanupSandboxKeytab(keytabPath);
     }
 
     private testGssInvalidHex() {
