@@ -58,6 +58,8 @@ module Krb5Util {
       Negotiate header values for SPNEGO token exchanges
     - @ref Krb5Util::parseNegotiateResponseHeader() parses SPNEGO
       NegTokenResp data including \c negState and optional response tokens
+    - @ref Krb5Util::getCredentialLifecycleInfo() evaluates credential
+      validity, expiry, and renewal windows from credential metadata
 
     Binary classes and constants remain in the \c Qore::Krb5 namespace;
     helper functions are exported from the \c Krb5Util namespace.
@@ -112,6 +114,48 @@ public namespace Krb5Util {
 
         #! The mechListMIC value as hex, if present
         *string mech_list_mic;
+    }
+
+    #! Credential validity and renewal status computed from credential metadata
+    public hashdecl CredentialLifecycleInfo {
+        #! Evaluation time as seconds since the Unix epoch
+        int now_epoch_seconds;
+
+        #! Credential start time as seconds since the Unix epoch
+        int start_time;
+
+        #! Credential end time as seconds since the Unix epoch
+        int end_time;
+
+        #! Credential renew-until time as seconds since the Unix epoch, or 0 if not renewable
+        int renew_until;
+
+        #! Seconds from the evaluation time until the credential starts; negative when already started
+        int seconds_until_start;
+
+        #! Seconds from the evaluation time until credential expiry; negative when expired
+        int remaining_seconds;
+
+        #! Seconds from the evaluation time until the renewable lifetime ends; 0 when not renewable
+        int renewable_seconds;
+
+        #! True when the evaluation time is at or after the credential start time
+        bool started;
+
+        #! True when the evaluation time is at or after the credential end time
+        bool expired;
+
+        #! True when the credential has started and is not expired
+        bool valid;
+
+        #! True when the credential has a renewable lifetime that has not elapsed
+        bool renewable;
+
+        #! True when a valid credential is within the configured renewal threshold
+        bool within_renewal_threshold;
+
+        #! True when the credential is valid, renewable, and within the renewal threshold
+        bool should_renew;
     }
 
     #! Builds a host-based Kerberos 5 service principal string of the form \c "service/host@REALM"
@@ -214,6 +258,95 @@ Qore::Krb5::GssClientContext ctx("LDAP/ad.example.com@EXAMPLE.COM", opts);
 
         # "tls-server-end-point:" in hex
         return "746c732d7365727665722d656e642d706f696e743a" + server_cert_hash_hex;
+    }
+
+    #! Evaluates credential validity and renewal status from credential metadata
+    /** This helper operates on the metadata returned by
+        Qore::Krb5::Krb5Credentials::getInfo() or
+        Qore::Krb5::Krb5CredentialCache::listCredentials(). It does not read
+        key or ticket bytes.
+
+        @param creds credential metadata
+        @param renew_threshold_seconds renewal threshold in seconds. A valid
+        renewable credential is considered due for renewal when its remaining
+        lifetime is less than or equal to this value
+        @param now_epoch_seconds optional deterministic evaluation time as
+        seconds since the Unix epoch; defaults to the current time
+        @param logger optional logger for safe diagnostics; raw credential
+        material is not logged
+
+        @return credential lifecycle information
+
+        @throw KRB5-CREDENTIAL-LIFECYCLE-ERROR if timestamps or threshold
+        values are invalid
+    */
+    public hash<CredentialLifecycleInfo> sub getCredentialLifecycleInfo(
+            hash<Qore::Krb5::Krb5CredentialsInfo> creds, int renew_threshold_seconds = 300,
+            *int now_epoch_seconds = NOTHING, *Qore::Logger::LoggerInterface logger = NOTHING) {
+        validateCredentialLifecycleInputs(creds, renew_threshold_seconds, now_epoch_seconds);
+
+        int evalTime = exists now_epoch_seconds ? now_epoch_seconds : now().getEpochSeconds();
+        int remaining = creds.end_time - evalTime;
+        int renewableRemaining = creds.renew_until ? creds.renew_until - evalTime : 0;
+        bool started = evalTime >= creds.start_time;
+        bool expired = evalTime >= creds.end_time;
+        bool renewable = creds.renew_until > 0 && evalTime < creds.renew_until;
+        bool withinRenewalThreshold = started && !expired && remaining <= renew_threshold_seconds;
+        bool shouldRenew = withinRenewalThreshold && renewable;
+
+        hash<CredentialLifecycleInfo> rv = <CredentialLifecycleInfo>{
+            "now_epoch_seconds": evalTime,
+            "start_time": creds.start_time,
+            "end_time": creds.end_time,
+            "renew_until": creds.renew_until,
+            "seconds_until_start": creds.start_time - evalTime,
+            "remaining_seconds": remaining,
+            "renewable_seconds": renewableRemaining,
+            "started": started,
+            "expired": expired,
+            "valid": started && !expired,
+            "renewable": renewable,
+            "within_renewal_threshold": withinRenewalThreshold,
+            "should_renew": shouldRenew,
+        };
+
+        logCredentialLifecycle(logger, sprintf("client=%y server=%y remaining_seconds=%d renewable_seconds=%d "
+            "valid=%y expired=%y should_renew=%y", creds.client, creds.server, rv.remaining_seconds,
+            rv.renewable_seconds, rv.valid, rv.expired, rv.should_renew));
+        return rv;
+    }
+
+    #! Returns True if credential metadata is expired at the evaluation time
+    /** @param creds credential metadata
+        @param now_epoch_seconds optional deterministic evaluation time as
+        seconds since the Unix epoch; defaults to the current time
+        @param logger optional logger for safe diagnostics
+
+        @return True if the credential is expired
+
+        @throw KRB5-CREDENTIAL-LIFECYCLE-ERROR if timestamps are invalid
+    */
+    public bool sub isCredentialExpired(hash<Qore::Krb5::Krb5CredentialsInfo> creds,
+            *int now_epoch_seconds = NOTHING, *Qore::Logger::LoggerInterface logger = NOTHING) {
+        return getCredentialLifecycleInfo(creds, 0, now_epoch_seconds, logger).expired;
+    }
+
+    #! Returns True if credential metadata is valid, renewable, and within the renewal threshold
+    /** @param creds credential metadata
+        @param renew_threshold_seconds renewal threshold in seconds
+        @param now_epoch_seconds optional deterministic evaluation time as
+        seconds since the Unix epoch; defaults to the current time
+        @param logger optional logger for safe diagnostics
+
+        @return True if the credential should be renewed now
+
+        @throw KRB5-CREDENTIAL-LIFECYCLE-ERROR if timestamps or threshold
+        values are invalid
+    */
+    public bool sub shouldRenewCredential(hash<Qore::Krb5::Krb5CredentialsInfo> creds,
+            int renew_threshold_seconds = 300, *int now_epoch_seconds = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        return getCredentialLifecycleInfo(creds, renew_threshold_seconds, now_epoch_seconds, logger).should_renew;
     }
 
     #! Encodes an ASN.1 DER length
@@ -644,6 +777,29 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
         }
     }
 
+    #! Validates credential lifecycle helper inputs
+    sub validateCredentialLifecycleInputs(hash<Qore::Krb5::Krb5CredentialsInfo> creds,
+            int renew_threshold_seconds, *int now_epoch_seconds) {
+        if (renew_threshold_seconds < 0) {
+            throw "KRB5-CREDENTIAL-LIFECYCLE-ERROR", "renewal threshold cannot be negative";
+        }
+        if (exists now_epoch_seconds && now_epoch_seconds < 0) {
+            throw "KRB5-CREDENTIAL-LIFECYCLE-ERROR", "evaluation time cannot be negative";
+        }
+        if (creds.start_time < 0) {
+            throw "KRB5-CREDENTIAL-LIFECYCLE-ERROR", "credential start time cannot be negative";
+        }
+        if (creds.end_time < 0) {
+            throw "KRB5-CREDENTIAL-LIFECYCLE-ERROR", "credential end time cannot be negative";
+        }
+        if (creds.renew_until < 0) {
+            throw "KRB5-CREDENTIAL-LIFECYCLE-ERROR", "credential renew-until time cannot be negative";
+        }
+        if (creds.end_time < creds.start_time) {
+            throw "KRB5-CREDENTIAL-LIFECYCLE-ERROR", "credential end time is before start time";
+        }
+    }
+
     #! Returns a symbolic name for an RFC 4178 negState value
     *string sub getNegStateName(int neg_state) {
         switch (neg_state) {
@@ -662,6 +818,13 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
     sub logSpnego(*Qore::Logger::LoggerInterface logger, string message) {
         if (logger) {
             logger.debug("Krb5Util SPNEGO: %s", message);
+        }
+    }
+
+    #! Logs safe credential lifecycle diagnostics without raw credential material
+    sub logCredentialLifecycle(*Qore::Logger::LoggerInterface logger, string message) {
+        if (logger) {
+            logger.debug("Krb5Util credential lifecycle: %s", message);
         }
     }
 }

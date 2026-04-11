@@ -43,6 +43,12 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testUtilityBuildTlsServerEndPointChannelBindingHex());
         addTestCase("utility tls-server-end-point channel binding validation",
             \testUtilityBuildTlsServerEndPointChannelBindingHexValidation());
+        addTestCase("utility credential lifecycle helpers",
+            \testUtilityCredentialLifecycleHelpers());
+        addTestCase("utility credential lifecycle validation",
+            \testUtilityCredentialLifecycleValidation());
+        addTestCase("utility credential lifecycle logger diagnostics safe",
+            \testUtilityCredentialLifecycleLoggerDiagnosticsSafe());
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
         addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
@@ -274,6 +280,91 @@ public class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-CHANNEL-BINDING-ERROR", sub() {
             Krb5Util::buildTlsServerEndPointChannelBindingHex("zz");
         });
+    }
+
+    private testUtilityCredentialLifecycleHelpers() {
+        hash<Qore::Krb5::Krb5CredentialsInfo> info = createTestCredentials().getInfo();
+
+        hash<Krb5Util::CredentialLifecycleInfo> nearExpiry =
+            Krb5Util::getCredentialLifecycleInfo(info, 120, 1900);
+        assertEq(1900, nearExpiry.now_epoch_seconds);
+        assertEq(1000, nearExpiry.start_time);
+        assertEq(2000, nearExpiry.end_time);
+        assertEq(3000, nearExpiry.renew_until);
+        assertEq(-900, nearExpiry.seconds_until_start);
+        assertEq(100, nearExpiry.remaining_seconds);
+        assertEq(1100, nearExpiry.renewable_seconds);
+        assertTrue(nearExpiry.started);
+        assertFalse(nearExpiry.expired);
+        assertTrue(nearExpiry.valid);
+        assertTrue(nearExpiry.renewable);
+        assertTrue(nearExpiry.within_renewal_threshold);
+        assertTrue(nearExpiry.should_renew);
+
+        assertFalse(Krb5Util::isCredentialExpired(info, 1999));
+        assertTrue(Krb5Util::isCredentialExpired(info, 2000));
+        assertTrue(Krb5Util::shouldRenewCredential(info, 100, 1900));
+        assertFalse(Krb5Util::shouldRenewCredential(info, 50, 1900));
+
+        hash<Krb5Util::CredentialLifecycleInfo> beforeStart =
+            Krb5Util::getCredentialLifecycleInfo(info, 120, 900);
+        assertFalse(beforeStart.started);
+        assertFalse(beforeStart.expired);
+        assertFalse(beforeStart.valid);
+        assertEq(100, beforeStart.seconds_until_start);
+        assertEq(1100, beforeStart.remaining_seconds);
+        assertFalse(beforeStart.within_renewal_threshold);
+        assertFalse(beforeStart.should_renew);
+
+        hash<Qore::Krb5::Krb5CredentialsInfo> nonRenewable = info;
+        nonRenewable.renew_until = 0;
+        hash<Krb5Util::CredentialLifecycleInfo> nonRenewableStatus =
+            Krb5Util::getCredentialLifecycleInfo(nonRenewable, 120, 1900);
+        assertFalse(nonRenewableStatus.renewable);
+        assertEq(0, nonRenewableStatus.renewable_seconds);
+        assertTrue(nonRenewableStatus.within_renewal_threshold);
+        assertFalse(nonRenewableStatus.should_renew);
+    }
+
+    private testUtilityCredentialLifecycleValidation() {
+        hash<Qore::Krb5::Krb5CredentialsInfo> info = createTestCredentials().getInfo();
+
+        assertThrows("KRB5-CREDENTIAL-LIFECYCLE-ERROR", sub() {
+            Krb5Util::getCredentialLifecycleInfo(info, -1, 1900);
+        });
+        assertThrows("KRB5-CREDENTIAL-LIFECYCLE-ERROR", sub() {
+            Krb5Util::getCredentialLifecycleInfo(info, 120, -1);
+        });
+
+        hash<Qore::Krb5::Krb5CredentialsInfo> bad = info;
+        bad.end_time = 999;
+        assertThrows("KRB5-CREDENTIAL-LIFECYCLE-ERROR", sub() {
+            Krb5Util::getCredentialLifecycleInfo(bad, 120, 1900);
+        });
+
+        bad = info;
+        bad.renew_until = -1;
+        assertThrows("KRB5-CREDENTIAL-LIFECYCLE-ERROR", sub() {
+            Krb5Util::getCredentialLifecycleInfo(bad, 120, 1900);
+        });
+    }
+
+    private testUtilityCredentialLifecycleLoggerDiagnosticsSafe() {
+        Qore::Logger::Logger logger("krb5-lifecycle-test", "DEBUG");
+        CaptureLogAppender appender();
+        logger.addAppender(appender);
+        appender.open();
+
+        hash<Qore::Krb5::Krb5CredentialsInfo> info = createTestCredentials().getInfo();
+        Krb5Util::getCredentialLifecycleInfo(info, 120, 1900, logger);
+
+        list<string> messages = appender.getMessages();
+        assertTrue(messages.size() >= 1);
+        string combined = foldl $1 + "\n" + $2, messages;
+        assertTrue(combined.find("Krb5Util credential lifecycle") >= 0);
+        assertTrue(combined.find("remaining_seconds") >= 0);
+        assertEq(-1, combined.find(getTestKeyHex1()));
+        assertEq(-1, combined.find("abcd"));
     }
 
     private testContextDefaults() {

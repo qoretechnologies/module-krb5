@@ -17,6 +17,7 @@ The module provides:
   restriction, and FAST armor credential caches
 - Credential metadata and credential-cache store/list/enumerate operations
 - Credential renewal and service-ticket acquisition from existing caches
+- Credential lifecycle helpers for expiry and renewal-threshold checks
 - In-memory credential caches and keytabs for tests and service setup
 - Filesystem sandbox enforcement for file-backed credential caches and
   keytabs
@@ -75,6 +76,14 @@ integrations:
       "WWW-Authenticate: Negotiate ...");
   hash<Krb5Util::SpnegoResponseInfo> info =
       Krb5Util::parseNegotiateResponseHeader("Negotiate ...");
+
+Credential metadata can be evaluated without exposing key or ticket material:
+
+  hash<Krb5Util::CredentialLifecycleInfo> lifecycle =
+      Krb5Util::getCredentialLifecycleInfo(creds.getInfo(), 300);
+  if (lifecycle.should_renew) {
+      # renew before expiry
+  }
 
 See the generated HTML documentation for the class reference, security model,
 use cases, and runnable examples.

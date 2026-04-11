@@ -72,6 +72,7 @@ output buffers are released even on early-return error paths.
   GSSAPI contexts, including channel bindings and message protection.
 - Initial credential acquisition from passwords and keytabs, credential
   renewal, and service-ticket acquisition from an existing TGT.
+- Credential lifecycle helpers for expiry and renewal-threshold evaluation.
 - Keytab management: adding, removing, and enumerating entries.
 - SPNEGO helpers for HTTP Negotiate token envelopes.
 - Basic credential delegation through `GssAcceptorContext`.
@@ -94,8 +95,8 @@ and ticket lifetimes.
 - **Full HTTP Negotiate helpers** — header parsing/building, `negState`
   exposure, final responses without `responseToken`, and logger-aware client
   and server token-loop helpers.
-- **Credential lifecycle helpers** — expiry checks, renewal thresholds, and
-  logger-aware renew-and-store workflows for long-running services.
+- **Credential lifecycle workflows** — logger-aware renew-and-store workflows
+  for long-running services.
 - **Keytab rotation helpers** — remove all entries for a principal or kvno,
   inspect the highest kvno, and validate a keytab entry before removing older
   material.
