@@ -39,12 +39,17 @@ The module provides:
 - GSSAPI MIC (Message Integrity Code) compute and verify for standalone
   integrity tokens used in SASL/GSSAPI integrity verification
 - Credential cache collection discovery across all configured backends
-- S4U2Self credential impersonation and S4U2Proxy constrained delegation
-  for identity-forwarding service architectures
+- S4U2Self credential impersonation for GSS identity-forwarding flows, plus
+  a low-level S4U2Proxy binding for caller-supplied Kerberos evidence tickets
+- GSS-level impersonated client context helper for service-to-service S4U
+  flows
 - Keytab entry removal for key rotation workflows
 - Keytab rotation helpers for highest-kvno discovery and old-entry cleanup
 - Credential renewal workflow helper for long-running services
-- Kerberos environment validation for deployment diagnostics
+- Credential cache maintenance helpers for renewal and service-ticket
+  prefetch workflows
+- Kerberos environment validation with structured checks for deployment
+  diagnostics
 - a `Krb5Util` helper module with Qore-language Kerberos and SPNEGO utilities,
   including HTTP Negotiate client/server step helpers
 
@@ -108,6 +113,22 @@ key material:
   int highest = Krb5Util::getKeytabHighestKvno(keytab, service_principal);
   int removed = Krb5Util::removeOldKeytabEntries(keytab, service_principal,
       highest);
+
+Long-running services can maintain a cache and prefetch service tickets:
+
+  hash<Krb5Util::CredentialCacheMaintenanceOptions> maint_opts();
+  maint_opts.renew_threshold_seconds = 300;
+  maint_opts.service_principals = ("HTTP/backend.example.com@EXAMPLE.COM",);
+  hash<Krb5Util::CredentialCacheMaintenanceResult> maint =
+      Krb5Util::maintainCredentialCache(ctx, cache, maint_opts, logger);
+
+Deployment checks can require a usable service keytab:
+
+  hash<Krb5Util::KerberosEnvironmentValidationOptions> env_opts();
+  env_opts.require_service_principal = True;
+  hash<Krb5Util::KerberosEnvironmentInfo> env =
+      Krb5Util::validateKerberosEnvironment(
+          "HTTP/qorus.example.com@EXAMPLE.COM", logger, env_opts);
 
 See the generated HTML documentation for the class reference, security model,
 use cases, and runnable examples.

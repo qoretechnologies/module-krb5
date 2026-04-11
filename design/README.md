@@ -81,9 +81,14 @@ output buffers are released even on early-return error paths.
 - GSSAPI MIC (Message Integrity Code) compute and verify.
 - Credential cache collection discovery across all configured backends.
 - S4U2Self credential impersonation via `gss_acquire_cred_impersonate_name()`
-  and S4U2Proxy constrained delegation via `KRB5_GC_CONSTRAINED_DELEGATION`.
+  for GSS-level identity-forwarding flows; the lower-level
+  `KRB5_GC_CONSTRAINED_DELEGATION` binding remains available for callers
+  that already have Kerberos evidence credentials.
 - Credential renewal workflow helper (`renewAndStoreIfNeeded`).
-- Kerberos environment validation helper (`validateKerberosEnvironment`).
+- Credential cache maintenance helpers for renewal and service-ticket
+  prefetch workflows.
+- Kerberos environment validation helper (`validateKerberosEnvironment`)
+  with strict readiness options and structured checks.
 - No KDC replication, admin (kadmin) operations, or prompter callbacks.
 
 ## Logging model
@@ -102,8 +107,8 @@ and ticket lifetimes.
 
 - **HTTP Negotiate workflows** — web-server adapter examples, session binding
   patterns, and policy checks around completed contexts.
-- **Credential lifecycle workflows** — logger-aware renew-and-store loop
-  helpers with configurable retry and backoff for long-running services.
+- **Credential lifecycle workflows** — scheduler examples and retry policy
+  wrappers around the cache maintenance helpers.
 - **Keytab rotation workflows** — dry-run reports, policy checks, and
   logger-aware keytab cleanup orchestration for service deployments.
 - **Cross-realm trust ergonomics** — helpers around canonicalization and

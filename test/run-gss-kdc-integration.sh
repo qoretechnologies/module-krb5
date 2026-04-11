@@ -67,6 +67,7 @@ EOF
 
 export KRB5_CONFIG="$krb5_conf"
 export KRB5_KDC_PROFILE="$kdc_conf"
+export KRB5_KTNAME="FILE:$keytab"
 export KRB5_TRACE="$tmpdir/krb5.trace"
 export MODULE_KRB5_TEST_REALM="$realm"
 export MODULE_KRB5_TEST_CLIENT_PRINCIPAL="$client_principal"
@@ -79,6 +80,7 @@ kdb5_util create -s -P "$master_password" -r "$realm"
 kadmin.local -r "$realm" -q "addprinc -pw $client_password $client_principal"
 kadmin.local -r "$realm" -q "modprinc -maxrenewlife 1h +allow_forwardable $client_principal"
 kadmin.local -r "$realm" -q "addprinc -randkey $service_principal"
+kadmin.local -r "$realm" -q "modprinc +ok_to_auth_as_delegate $service_principal"
 kadmin.local -r "$realm" -q "ktadd -k $keytab $service_principal"
 krb5kdc -P "$pidfile" -r "$realm" -p "$port"
 

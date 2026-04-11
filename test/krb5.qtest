@@ -54,14 +54,38 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("renew and store validation", \testRenewAndStoreValidation());
         addTestCase("renew and store logger diagnostics safe",
             \testRenewAndStoreLoggerDiagnosticsSafe());
+        addTestCase("credential cache maintenance no tgt",
+            \testCredentialCacheMaintenanceNoTgt());
+        addTestCase("credential cache maintenance missing tgt error",
+            \testCredentialCacheMaintenanceMissingTgtError());
+        addTestCase("credential cache maintenance expired tgt",
+            \testCredentialCacheMaintenanceExpiredTgt());
+        addTestCase("credential cache maintenance dry run renewal",
+            \testCredentialCacheMaintenanceDryRunRenewal());
+        addTestCase("credential cache maintenance service ticket failure",
+            \testCredentialCacheMaintenanceServiceTicketFailure());
+        addTestCase("credential cache maintenance validation",
+            \testCredentialCacheMaintenanceValidation());
+        addTestCase("credential cache maintenance logger diagnostics safe",
+            \testCredentialCacheMaintenanceLoggerDiagnosticsSafe());
+        addTestCase("credential cache collection maintenance returns list",
+            \testCredentialCacheCollectionMaintenanceReturnsList());
         addTestCase("validate kerberos environment basic",
             \testValidateKerberosEnvironmentBasic());
         addTestCase("validate kerberos environment service principal",
             \testValidateKerberosEnvironmentServicePrincipal());
+        addTestCase("validate kerberos environment malformed service principal",
+            \testValidateKerberosEnvironmentMalformedServicePrincipal());
+        addTestCase("validate kerberos environment invalid options",
+            \testValidateKerberosEnvironmentInvalidOptions());
         addTestCase("validate kerberos environment logger diagnostics safe",
             \testValidateKerberosEnvironmentLoggerSafe());
         addTestCase("s4u impersonate requires network domain",
             \testS4uImpersonateRequiresNetworkDomain());
+        addTestCase("s4u impersonated client helper requires network domain",
+            \testS4uImpersonatedClientHelperRequiresNetworkDomain());
+        addTestCase("s4u impersonated client helper rejects empty target",
+            \testS4uImpersonatedClientHelperRejectsEmptyTarget());
         addTestCase("s4u proxy empty cache rejected",
             \testS4uProxyEmptyCacheRejected());
         addTestCase("s4u proxy sandbox deny",
@@ -410,6 +434,9 @@ public class Krb5ModuleTest inherits QUnit::Test {
         hash<Krb5Util::KerberosEnvironmentInfo> env = Krb5Util::validateKerberosEnvironment();
         assertTrue(env.warnings instanceof list);
         assertTrue(env.errors instanceof list);
+        assertTrue(env.checks instanceof list);
+        assertTrue(env.checks.size() > 0);
+        assertTrue(hasEnvironmentCheck(env, "default-realm"));
         assertTrue(env.healthy instanceof bool);
         assertEq(env.errors.size() == 0, env.healthy);
         assertTrue(env.cache_accessible instanceof bool);
@@ -422,9 +449,33 @@ public class Krb5ModuleTest inherits QUnit::Test {
         assertTrue(env instanceof hash);
         if (env.keytab_accessible && exists env.keytab_entry_count && env.keytab_entry_count > 0) {
             assertTrue(env.service_principal_in_keytab instanceof bool);
+            if (env.service_principal_in_keytab == False) {
+                assertFalse(env.healthy);
+                assertTrue(hasEnvironmentCheck(env, "default-keytab-service-principal", False, "error"));
+            }
         }
         # Always verify the function completes without throwing
         assertTrue(env.healthy instanceof bool);
+    }
+
+    private testValidateKerberosEnvironmentMalformedServicePrincipal() {
+        assertThrows("KRB5-PRINCIPAL-ERROR", sub() {
+            Krb5Util::validateKerberosEnvironment("");
+        });
+    }
+
+    private testValidateKerberosEnvironmentInvalidOptions() {
+        hash<Krb5Util::KerberosEnvironmentValidationOptions> opts();
+        opts.renew_threshold_seconds = -1;
+        assertThrows("KRB5-ENVIRONMENT-ERROR", sub() {
+            Krb5Util::validateKerberosEnvironment(NOTHING, NOTHING, opts);
+        });
+
+        hash<Krb5Util::KerberosEnvironmentValidationOptions> opts2();
+        opts2.min_tgt_lifetime_seconds = -1;
+        assertThrows("KRB5-ENVIRONMENT-ERROR", sub() {
+            Krb5Util::validateKerberosEnvironment(NOTHING, NOTHING, opts2);
+        });
     }
 
     private testValidateKerberosEnvironmentLoggerSafe() {
@@ -441,6 +492,18 @@ public class Krb5ModuleTest inherits QUnit::Test {
         assertTrue(combined.find("Krb5Util environment") >= 0);
     }
 
+    private bool hasEnvironmentCheck(hash<Krb5Util::KerberosEnvironmentInfo> env, string checkId,
+            *bool expectedOk = NOTHING, *string expectedSeverity = NOTHING) {
+        foreach hash<Krb5Util::KerberosEnvironmentCheckInfo> check in (env.checks) {
+            if (check.check_id == checkId
+                    && (!exists expectedOk || check.ok == expectedOk)
+                    && (!exists expectedSeverity || check.severity == expectedSeverity)) {
+                return True;
+            }
+        }
+        return False;
+    }
+
     private testS4uImpersonateRequiresNetworkDomain() {
         Program p(PO_NO_NETWORK);
         assertThrows("PARSE-EXCEPTION", sub() {
@@ -451,6 +514,33 @@ Qore::Krb5::GssCredential cred;
 Qore::Krb5::Krb5Principal p(\"alice@EXAMPLE.COM\");
 Qore::Krb5::GssCredential::impersonateName(cred, p);
 ", "s4u-domain-test");
+        });
+    }
+
+    private testS4uImpersonatedClientHelperRequiresNetworkDomain() {
+        Program p(PO_NO_NETWORK);
+        assertThrows("PARSE-EXCEPTION", sub() {
+            p.parse("
+%modern
+%requires krb5
+%requires Krb5Util
+Qore::Krb5::GssCredential cred;
+Qore::Krb5::Krb5Principal p(\"alice@EXAMPLE.COM\");
+Krb5Util::createImpersonatedClientContext(\"HTTP/backend.example.com@EXAMPLE.COM\", cred, p);
+", "s4u-helper-domain-test");
+        });
+    }
+
+    private testS4uImpersonatedClientHelperRejectsEmptyTarget() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-s4u-helper-empty-target");
+        Qore::Krb5::Krb5Principal service("HTTP/qorus.example.com@EXAMPLE.COM");
+        kt.addEntry(service, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        Qore::Krb5::GssCredential cred = Qore::Krb5::GssCredential::fromKeytab(kt, service);
+        Qore::Krb5::Krb5Principal user("alice@EXAMPLE.COM");
+
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            Krb5Util::createImpersonatedClientContext("", cred, user);
         });
     }
 
@@ -499,10 +589,14 @@ Qore::Krb5::GssCredential::impersonateName(cred, p);
     }
 
     private Qore::Krb5::Krb5Credentials createTestTgt() {
+        return createTestTgtWithTimes(1000, 2000, 3000);
+    }
+
+    private Qore::Krb5::Krb5Credentials createTestTgtWithTimes(int startTime, int endTime, int renewUntil) {
         Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
         Qore::Krb5::Krb5Principal server("krbtgt/EXAMPLE.COM@EXAMPLE.COM");
         Qore::Krb5::Krb5Credentials creds(client, server, getTestKeyHex1(),
-            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 3000, 0x40, "abcd");
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, startTime, endTime, renewUntil, 0x40, "abcd");
         return creds;
     }
 
@@ -566,6 +660,152 @@ Qore::Krb5::GssCredential::impersonateName(cred, p);
         assertTrue(combined.find("Krb5Util renew-and-store") >= 0);
         assertEq(-1, combined.find(getTestKeyHex1()));
         assertEq(-1, combined.find("abcd"));
+    }
+
+    private testCredentialCacheMaintenanceNoTgt() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-no-tgt");
+        cache.initialize(client);
+        cache.storeCredentials(createTestCredentials());
+
+        hash<Krb5Util::CredentialCacheMaintenanceResult> result =
+            Krb5Util::maintainCredentialCache(ctx, cache);
+        assertTrue(result.healthy);
+        assertFalse(result.renewed);
+        assertFalse(result.was_expired);
+        assertFalse(exists result.tgt_lifecycle);
+        assertTrue(result.warnings.size() > 0);
+    }
+
+    private testCredentialCacheMaintenanceMissingTgtError() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-missing-tgt-error");
+        cache.initialize(client);
+
+        hash<Krb5Util::CredentialCacheMaintenanceOptions> opts();
+        opts.missing_tgt_is_error = True;
+        hash<Krb5Util::CredentialCacheMaintenanceResult> result =
+            Krb5Util::maintainCredentialCache(ctx, cache, opts);
+        assertFalse(result.healthy);
+        assertTrue(result.errors.size() > 0);
+
+        opts.fail_fast = True;
+        assertThrows("KRB5-CACHE-MAINTENANCE-ERROR", sub() {
+            Krb5Util::maintainCredentialCache(ctx, cache, opts);
+        });
+    }
+
+    private testCredentialCacheMaintenanceExpiredTgt() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-expired-tgt");
+        cache.initialize(client);
+        cache.storeCredentials(createTestTgt());
+
+        hash<Krb5Util::CredentialCacheMaintenanceResult> result =
+            Krb5Util::maintainCredentialCache(ctx, cache);
+        assertTrue(result.healthy);
+        assertTrue(result.was_expired);
+        assertFalse(result.renewed);
+        assertTrue(exists result.tgt_lifecycle);
+        assertTrue(result.tgt_lifecycle.expired);
+    }
+
+    private testCredentialCacheMaintenanceDryRunRenewal() {
+        int t = now().getEpochSeconds();
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-dry-run-renewal");
+        cache.initialize(client);
+        cache.storeCredentials(createTestTgtWithTimes(t - 10, t + 100, t + 3600));
+
+        hash<Krb5Util::CredentialCacheMaintenanceOptions> opts();
+        opts.renew_threshold_seconds = 300;
+        opts.dry_run = True;
+        opts.service_principals = ("HTTP/target.example.com@EXAMPLE.COM",);
+
+        hash<Krb5Util::CredentialCacheMaintenanceResult> result =
+            Krb5Util::maintainCredentialCache(ctx, cache, opts);
+        assertTrue(result.healthy);
+        assertTrue(result.dry_run);
+        assertFalse(result.renewed);
+        assertTrue(result.tgt_lifecycle.should_renew);
+        assertEq(1, result.service_tickets.size());
+        assertTrue(result.service_tickets[0].dry_run);
+        assertFalse(result.service_tickets[0].acquired);
+    }
+
+    private testCredentialCacheMaintenanceServiceTicketFailure() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-service-failure");
+        cache.initialize(client);
+
+        hash<Krb5Util::CredentialCacheMaintenanceOptions> opts();
+        opts.service_principals = ("HTTP/target.example.com@EXAMPLE.COM",);
+        hash<Krb5Util::CredentialCacheMaintenanceResult> result =
+            Krb5Util::maintainCredentialCache(ctx, cache, opts);
+        assertFalse(result.healthy);
+        assertEq(1, result.service_tickets.size());
+        assertFalse(result.service_tickets[0].acquired);
+        assertTrue(exists result.service_tickets[0].error);
+
+        opts.fail_fast = True;
+        assertThrows("KRB5-CACHE-MAINTENANCE-ERROR", sub() {
+            Krb5Util::maintainCredentialCache(ctx, cache, opts);
+        });
+    }
+
+    private testCredentialCacheMaintenanceValidation() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-validation");
+        cache.initialize(client);
+
+        hash<Krb5Util::CredentialCacheMaintenanceOptions> opts();
+        opts.renew_threshold_seconds = -1;
+        assertThrows("KRB5-CACHE-MAINTENANCE-ERROR", sub() {
+            Krb5Util::maintainCredentialCache(ctx, cache, opts);
+        });
+
+        hash<Krb5Util::CredentialCacheMaintenanceOptions> opts2();
+        opts2.service_principals = ("",);
+        assertThrows("KRB5-CACHE-MAINTENANCE-ERROR", sub() {
+            Krb5Util::maintainCredentialCache(ctx, cache, opts2);
+        });
+    }
+
+    private testCredentialCacheMaintenanceLoggerDiagnosticsSafe() {
+        Qore::Logger::Logger logger("krb5-maint-test", "DEBUG");
+        CaptureLogAppender appender();
+        logger.addAppender(appender);
+        appender.open();
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-maint-logger");
+        cache.initialize(client);
+        cache.storeCredentials(createTestTgt());
+
+        Krb5Util::maintainCredentialCache(ctx, cache, NOTHING, logger);
+
+        list<string> messages = appender.getMessages();
+        assertTrue(messages.size() >= 1);
+        string combined = foldl $1 + "\n" + $2, messages;
+        assertTrue(combined.find("Krb5Util credential maintenance") >= 0);
+        assertEq(-1, combined.find(getTestKeyHex1()));
+        assertEq(-1, combined.find("abcd"));
+    }
+
+    private testCredentialCacheCollectionMaintenanceReturnsList() {
+        Qore::Krb5::Krb5Context ctx();
+        hash<Krb5Util::CredentialCacheMaintenanceOptions> opts();
+        opts.dry_run = True;
+        list<hash<Krb5Util::CredentialCacheMaintenanceResult>> results =
+            Krb5Util::maintainCredentialCaches(ctx, opts);
+        assertTrue(results instanceof list);
     }
 
     private testContextDefaults() {

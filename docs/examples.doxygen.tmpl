@@ -569,6 +569,69 @@ Qore::Krb5::GssCredential delegated = acceptor.getDelegatedCredential();
 # 'delegated' can now be used to initiate connections on behalf of the client
     @endcode
 
+    @section krb5examples_s4u S4U Impersonated Client Context
+
+    Services configured for protocol transition can create a GSSAPI client
+    context on behalf of a user without receiving the user's password. The
+    service must first acquire its own TGT from a keytab, then import that
+    cache as a GSS credential.
+
+    @code{.py}
+%modern
+%requires krb5
+%requires Krb5Util
+
+Qore::Krb5::Krb5Context ctx();
+Qore::Krb5::Krb5Principal service("HTTP/frontend.example.com@EXAMPLE.COM");
+Qore::Krb5::Krb5Principal user("alice@EXAMPLE.COM");
+Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:/etc/qorus/frontend.keytab");
+
+Qore::Krb5::Krb5Credentials service_tgt =
+    ctx.acquireCredentialsWithKeytab(service, kt);
+auto service_cache = ctx.createMemoryCredentialCache(service, "frontend-s4u");
+service_cache.initialize(service);
+service_cache.storeCredentials(service_tgt);
+
+Qore::Krb5::GssCredential service_cred =
+    Qore::Krb5::GssCredential::fromCredentialCache(service_cache);
+
+hash<Qore::Krb5::GssClientContextOptions> opts();
+opts.mechanism = "kerberos";
+opts.name_type = "krb5-principal";
+
+Qore::Krb5::GssClientContext downstream =
+    Krb5Util::createImpersonatedClientContext(
+        "HTTP/backend.example.com@EXAMPLE.COM", service_cred, user, opts);
+    @endcode
+
+    @section krb5examples_maintenance Credential Cache Maintenance
+
+    A long-running process can keep a cache ready by renewing TGTs near
+    expiry and prefetching service tickets. Results collect errors by
+    default; set \c fail_fast to throw on the first failed action.
+
+    @code{.py}
+%modern
+%requires krb5
+%requires Krb5Util
+%requires Logger
+
+Qore::Krb5::Krb5Context ctx();
+auto cache = ctx.openDefaultCredentialCache();
+
+hash<Krb5Util::CredentialCacheMaintenanceOptions> opts();
+opts.renew_threshold_seconds = 300;
+opts.service_principals = ("HTTP/backend.example.com@EXAMPLE.COM",);
+
+hash<Krb5Util::CredentialCacheMaintenanceResult> result =
+    Krb5Util::maintainCredentialCache(ctx, cache, opts, logger);
+if (!result.healthy) {
+    foreach string err in (result.errors) {
+        logger.error("Kerberos cache maintenance: %s", err);
+    }
+}
+    @endcode
+
     @section krb5examples_synthetic_creds Synthetic Credentials for Tests
 
     The @ref Qore::Krb5::Krb5Credentials constructor accepts explicit

@@ -64,9 +64,13 @@ module Krb5Util {
       material after key rotation
     - @ref Krb5Util::renewAndStoreIfNeeded() checks whether credentials
       in a cache are near expiry and, if so, renews and stores them back
+    - @ref Krb5Util::maintainCredentialCache() renews cache credentials
+      and optionally prefetches service tickets for long-running services
     - @ref Krb5Util::validateKerberosEnvironment() composes queries to
       the default realm, credential cache, and keytab into a structured
       health report for deployment diagnostics
+    - @ref Krb5Util::createImpersonatedClientContext() creates a GSSAPI
+      initiator context using a service credential and S4U2Self impersonation
 
     Binary classes and constants remain in the \c Qore::Krb5 namespace;
     helper functions are exported from the \c Krb5Util namespace.
@@ -221,6 +225,114 @@ public namespace Krb5Util {
         *string error;
     }
 
+    #! Options for credential-cache maintenance helpers
+    public hashdecl CredentialCacheMaintenanceOptions {
+        #! Renewal threshold in seconds
+        *int renew_threshold_seconds;
+
+        #! If True, evaluate actions without storing renewed credentials or service tickets
+        *bool dry_run;
+
+        #! If True, throw on the first failed action instead of collecting errors
+        *bool fail_fast;
+
+        #! If True, missing or expired TGT conditions make the result unhealthy
+        *bool missing_tgt_is_error;
+
+        #! Service principals to prefetch through TGS requests
+        *list<string> service_principals;
+    }
+
+    #! Result of one service-ticket maintenance action
+    public hashdecl ServiceTicketMaintenanceResult {
+        #! Requested service principal
+        string service_principal;
+
+        #! True if credentials were acquired
+        bool acquired;
+
+        #! True if the operation was skipped due to dry-run mode
+        bool dry_run;
+
+        #! Credential metadata when a ticket was acquired
+        *hash<Qore::Krb5::Krb5CredentialsInfo> credentials;
+
+        #! Error captured when acquisition failed
+        *string error;
+    }
+
+    #! Result of credential-cache maintenance
+    public hashdecl CredentialCacheMaintenanceResult {
+        #! Cache full name if available
+        *string cache_name;
+
+        #! Primary principal in the cache, if available
+        *string principal;
+
+        #! True if dry-run mode was enabled
+        bool dry_run;
+
+        #! True if the TGT was renewed and stored
+        bool renewed;
+
+        #! True if the TGT was expired at evaluation time
+        bool was_expired;
+
+        #! TGT lifecycle information, if a TGT was found
+        *hash<CredentialLifecycleInfo> tgt_lifecycle;
+
+        #! Service-ticket prefetch results
+        list<hash<ServiceTicketMaintenanceResult>> service_tickets;
+
+        #! Warnings collected during maintenance
+        list<string> warnings;
+
+        #! Errors collected during maintenance
+        list<string> errors;
+
+        #! True if the errors list is empty
+        bool healthy;
+    }
+
+    #! Options for @ref Krb5Util::validateKerberosEnvironment()
+    public hashdecl KerberosEnvironmentValidationOptions {
+        #! Treat an inaccessible default credential cache as an error
+        *bool require_cache;
+
+        #! Treat a missing, expired, or too-short-lived TGT as an error
+        *bool require_tgt;
+
+        #! Treat an inaccessible or empty default keytab as an error
+        *bool require_keytab;
+
+        #! Treat a missing service principal in the default keytab as an error
+        *bool require_service_principal;
+
+        #! Renewal threshold used when evaluating cached TGT lifecycle
+        *int renew_threshold_seconds;
+
+        #! Minimum acceptable remaining TGT lifetime in seconds
+        *int min_tgt_lifetime_seconds;
+    }
+
+    #! Single structured Kerberos environment validation check
+    public hashdecl KerberosEnvironmentCheckInfo {
+        #! Stable machine-readable check ID
+        string check_id;
+
+        #! Check severity: "info", "warning", or "error"
+        string severity;
+
+        #! True if the check passed
+        bool ok;
+
+        #! Human-readable safe diagnostic message
+        string message;
+
+        #! Optional remediation hint
+        *string remediation;
+    }
+
     #! Kerberos environment health report
     public hashdecl KerberosEnvironmentInfo {
         #! Default realm from the Kerberos configuration
@@ -270,6 +382,9 @@ public namespace Krb5Util {
 
         #! Errors about the environment (conditions that prevent authentication)
         list<string> errors;
+
+        #! Structured validation checks
+        list<hash<KerberosEnvironmentCheckInfo>> checks;
 
         #! True if the errors list is empty
         bool healthy;
@@ -636,7 +751,8 @@ Qore::Krb5::GssClientContext ctx("LDAP/ad.example.com@EXAMPLE.COM", opts);
     #! Checks whether the TGT in a credential cache needs renewal and, if so, renews and stores it
     /** This is the primary workflow helper for long-running services that need
         to keep their Kerberos credentials fresh. It finds the TGT
-        (\c krbtgt/REALM@REALM) in the cache, evaluates its lifecycle, and
+        (for example, \c "krbtgt/EXAMPLE.COM\@EXAMPLE.COM") in the cache,
+        evaluates its lifecycle, and
         renews only when the credential is valid, renewable, and within the
         renewal threshold.
 
@@ -756,6 +872,192 @@ if (result.renewed) {
         }
     }
 
+    #! Maintains one credential cache by renewing its TGT and optionally prefetching service tickets
+    /** @param ctx Kerberos context for renewal and TGS RPCs
+        @param cache credential cache to maintain
+        @param opts optional maintenance controls
+        @param logger optional logger for safe diagnostics; credential material
+        is not logged
+
+        @return structured maintenance result
+
+        @throw KRB5-CACHE-MAINTENANCE-ERROR if options are invalid, or if
+        \a opts.fail_fast is True and an action fails
+    */
+    public hash<CredentialCacheMaintenanceResult> sub maintainCredentialCache(
+            Qore::Krb5::Krb5Context ctx,
+            Qore::Krb5::Krb5CredentialCache cache,
+            *hash<CredentialCacheMaintenanceOptions> opts = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        validateCredentialCacheMaintenanceOptions(opts);
+
+        int renewThreshold = exists opts && exists opts.renew_threshold_seconds ? opts.renew_threshold_seconds : 300;
+        bool dryRun = exists opts && exists opts.dry_run ? opts.dry_run : False;
+        bool failFast = exists opts && exists opts.fail_fast ? opts.fail_fast : False;
+        bool missingTgtIsError = exists opts && exists opts.missing_tgt_is_error ? opts.missing_tgt_is_error : False;
+        list<string> servicePrincipals = exists opts && exists opts.service_principals ? opts.service_principals : ();
+
+        list<string> warnings = ();
+        list<string> errors = ();
+        list<hash<ServiceTicketMaintenanceResult>> serviceResults = ();
+        *hash<CredentialLifecycleInfo> tgtLifecycle;
+        bool renewed = False;
+        bool wasExpired = False;
+        *string cacheName;
+        *string principalString;
+
+        try {
+            cacheName = cache.getFullName();
+        } catch (hash<ExceptionInfo> ex) {
+            push warnings, sprintf("credential cache full name not available: %s", ex.desc);
+        }
+
+        logCredentialMaintenance(logger, sprintf("maintaining cache=%y dry_run=%y services=%d threshold=%d",
+            exists cacheName ? cacheName : NOTHING, dryRun, servicePrincipals.size(), renewThreshold));
+
+        Qore::Krb5::Krb5Principal principal;
+        try {
+            principal = cache.getPrimaryPrincipal();
+            principalString = principal.toString();
+        } catch (hash<ExceptionInfo> ex) {
+            string err = sprintf("%s: %s", ex.err, ex.desc);
+            addMaintenanceError(\errors, failFast, "credential cache primary principal not available: " + err);
+            return makeCredentialCacheMaintenanceResult(cacheName, principalString, dryRun, renewed, wasExpired,
+                tgtLifecycle, serviceResults, warnings, errors);
+        }
+
+        list<hash<Qore::Krb5::Krb5CredentialsInfo>> allCreds;
+        try {
+            allCreds = cache.listCredentials();
+        } catch (hash<ExceptionInfo> ex) {
+            string err = sprintf("%s: %s", ex.err, ex.desc);
+            addMaintenanceError(\errors, failFast, "credential cache cannot be enumerated: " + err);
+            return makeCredentialCacheMaintenanceResult(cacheName, principalString, dryRun, renewed, wasExpired,
+                tgtLifecycle, serviceResults, warnings, errors);
+        }
+
+        string realm = principal.getRealm();
+        string tgtServer = sprintf("krbtgt/%s@%s", realm, realm);
+        *hash<Qore::Krb5::Krb5CredentialsInfo> tgt;
+        foreach hash<Qore::Krb5::Krb5CredentialsInfo> entry in (allCreds) {
+            if (entry.server == tgtServer) {
+                tgt = entry;
+                break;
+            }
+        }
+
+        if (!exists tgt) {
+            string msg = sprintf("no TGT %y found in credential cache", tgtServer);
+            if (missingTgtIsError) {
+                addMaintenanceError(\errors, failFast, msg);
+            } else {
+                push warnings, msg;
+            }
+        } else {
+            tgtLifecycle = getCredentialLifecycleInfo(tgt, renewThreshold, NOTHING, logger);
+            wasExpired = tgtLifecycle.expired;
+            if (tgtLifecycle.expired) {
+                string msg = sprintf("TGT is expired (expired %d seconds ago)", -tgtLifecycle.remaining_seconds);
+                if (missingTgtIsError) {
+                    addMaintenanceError(\errors, failFast, msg);
+                } else {
+                    push warnings, msg;
+                }
+            } else if (tgtLifecycle.should_renew) {
+                if (dryRun) {
+                    push warnings, sprintf("TGT would be renewed; remaining_seconds=%d",
+                        tgtLifecycle.remaining_seconds);
+                } else {
+                    hash<RenewAndStoreResult> renewal =
+                        renewAndStoreIfNeeded(ctx, cache, renewThreshold, logger);
+                    renewed = renewal.renewed;
+                    if (exists renewal.error) {
+                        addMaintenanceError(\errors, failFast, "TGT renewal failed: " + renewal.error);
+                    }
+                }
+            }
+        }
+
+        foreach string servicePrincipal in (servicePrincipals) {
+            Qore::Krb5::Krb5Principal service(servicePrincipal);
+            if (dryRun) {
+                push serviceResults, <ServiceTicketMaintenanceResult>{
+                    "service_principal": service.toString(),
+                    "acquired": False,
+                    "dry_run": True,
+                };
+                continue;
+            }
+
+            try {
+                Qore::Krb5::Krb5Credentials serviceCreds = ctx.acquireServiceCredentials(cache, service);
+                cache.storeCredentials(serviceCreds);
+                push serviceResults, <ServiceTicketMaintenanceResult>{
+                    "service_principal": service.toString(),
+                    "acquired": True,
+                    "dry_run": False,
+                    "credentials": serviceCreds.getInfo(),
+                };
+                logCredentialMaintenance(logger, sprintf("service ticket acquired for %y", service.toString()));
+            } catch (hash<ExceptionInfo> ex) {
+                string err = sprintf("%s: %s", ex.err, ex.desc);
+                push serviceResults, <ServiceTicketMaintenanceResult>{
+                    "service_principal": service.toString(),
+                    "acquired": False,
+                    "dry_run": False,
+                    "error": err,
+                };
+                addMaintenanceError(\errors, failFast,
+                    sprintf("service ticket acquisition failed for %y: %s", service.toString(), err));
+            }
+        }
+
+        return makeCredentialCacheMaintenanceResult(cacheName, principalString, dryRun, renewed, wasExpired,
+            tgtLifecycle, serviceResults, warnings, errors);
+    }
+
+    #! Maintains all credential caches in the configured cache collection
+    /** @param ctx Kerberos context used to enumerate and open caches
+        @param opts optional maintenance controls
+        @param logger optional logger for safe diagnostics
+
+        @return one maintenance result per cache discovered or opened
+
+        @throw KRB5-CACHE-MAINTENANCE-ERROR if \a opts.fail_fast is True and
+        any cache cannot be maintained
+    */
+    public list<hash<CredentialCacheMaintenanceResult>> sub maintainCredentialCaches(
+            Qore::Krb5::Krb5Context ctx,
+            *hash<CredentialCacheMaintenanceOptions> opts = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        validateCredentialCacheMaintenanceOptions(opts);
+        bool failFast = exists opts && exists opts.fail_fast ? opts.fail_fast : False;
+        list<hash<CredentialCacheMaintenanceResult>> rv = ();
+
+        foreach hash<Qore::Krb5::Krb5CredentialCacheInfo> info in (ctx.listCredentialCaches()) {
+            try {
+                auto cache = ctx.openCredentialCache(info.full_name);
+                push rv, maintainCredentialCache(ctx, cache, opts, logger);
+            } catch (hash<ExceptionInfo> ex) {
+                string err = sprintf("%s: %s", ex.err, ex.desc);
+                if (failFast) {
+                    throw "KRB5-CACHE-MAINTENANCE-ERROR", err;
+                }
+                push rv, <CredentialCacheMaintenanceResult>{
+                    "cache_name": info.full_name,
+                    "dry_run": exists opts && exists opts.dry_run ? opts.dry_run : False,
+                    "renewed": False,
+                    "was_expired": False,
+                    "service_tickets": (),
+                    "warnings": (),
+                    "errors": (err,),
+                    "healthy": False,
+                };
+            }
+        }
+        return rv;
+    }
+
     #! Validates the Kerberos environment and returns a structured health report
     /** Each subsystem (realm, cache, keytab) is probed independently and
         failures are captured in @ref KerberosEnvironmentInfo::warnings and
@@ -782,36 +1084,79 @@ if (!env.healthy) {
         @ref KerberosEnvironmentInfo::service_principal_kvno
         @param logger optional logger for safe diagnostics; raw credential
         material is not logged
+        @param opts optional validation behavior controls; when omitted, cache
+        errors are fatal, keytab errors are warnings unless a service principal
+        is supplied, and TGT lifecycle issues are warnings
 
         @return Kerberos environment health report
+
+        @throw KRB5-ENVIRONMENT-ERROR if numeric options are invalid
     */
     public hash<KerberosEnvironmentInfo> sub validateKerberosEnvironment(
             *string service_principal = NOTHING,
-            *Qore::Logger::LoggerInterface logger = NOTHING) {
+            *Qore::Logger::LoggerInterface logger = NOTHING,
+            *hash<KerberosEnvironmentValidationOptions> opts = NOTHING) {
         list<string> warnings = ();
         list<string> errors = ();
+        list<hash<KerberosEnvironmentCheckInfo>> checks = ();
+
+        bool requireCache = exists opts && exists opts.require_cache ? opts.require_cache : True;
+        bool requireTgt = exists opts && exists opts.require_tgt ? opts.require_tgt : False;
+        bool requireKeytab = exists opts && exists opts.require_keytab ? opts.require_keytab : exists service_principal;
+        bool requireServicePrincipal = exists opts && exists opts.require_service_principal
+            ? opts.require_service_principal : exists service_principal;
+        int renewThreshold = exists opts && exists opts.renew_threshold_seconds ? opts.renew_threshold_seconds : 300;
+        *int minTgtLifetime = exists opts && exists opts.min_tgt_lifetime_seconds
+            ? opts.min_tgt_lifetime_seconds : NOTHING;
+
+        if (renewThreshold < 0) {
+            throw "KRB5-ENVIRONMENT-ERROR", "renewal threshold cannot be negative";
+        }
+        if (exists minTgtLifetime && minTgtLifetime < 0) {
+            throw "KRB5-ENVIRONMENT-ERROR", "minimum TGT lifetime cannot be negative";
+        }
 
         Qore::Krb5::Krb5Context ctx();
+
+        *string servicePrincipalString;
+        if (exists service_principal) {
+            Qore::Krb5::Krb5Principal servicePrincipalObj(service_principal);
+            servicePrincipalString = servicePrincipalObj.toString();
+        }
 
         *string defaultRealm;
         try {
             defaultRealm = ctx.getDefaultRealm();
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-realm", True,
+                sprintf("default realm is %y", defaultRealm), "info");
         } catch (hash<ExceptionInfo> ex) {
-            push errors, sprintf("default realm not available: %s", ex.desc);
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-realm", False,
+                sprintf("default realm not available: %s", ex.desc), "error",
+                "configure a default realm in krb5.conf or pass explicit principals with realms");
         }
 
         *string defaultCacheName;
         try {
             defaultCacheName = ctx.getDefaultCredentialCacheName();
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-name", True,
+                sprintf("default credential cache name is %y", defaultCacheName), "info");
         } catch (hash<ExceptionInfo> ex) {
-            push errors, sprintf("default credential cache name not available: %s", ex.desc);
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-name", False,
+                sprintf("default credential cache name not available: %s", ex.desc),
+                requireCache ? "error" : "warning",
+                "configure a default credential cache or pass an explicit cache");
         }
 
         *string defaultKeytabName;
         try {
             defaultKeytabName = ctx.getDefaultKeytabName();
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-name", True,
+                sprintf("default keytab name is %y", defaultKeytabName), "info");
         } catch (hash<ExceptionInfo> ex) {
-            push warnings, sprintf("default keytab name not available: %s", ex.desc);
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-name", False,
+                sprintf("default keytab name not available: %s", ex.desc),
+                requireKeytab ? "error" : "warning",
+                "configure a default keytab with KRB5_KTNAME or the krb5 configuration");
         }
 
         logEnvironmentValidation(logger, sprintf("defaults realm=%y cache=%y keytab=%y",
@@ -824,57 +1169,105 @@ if (!env.healthy) {
         *string cachePrincipal;
         *int cacheCredentialCount;
         *hash<CredentialLifecycleInfo> tgtLifecycle;
+        bool tgtFound = False;
 
         try {
             auto cc = ctx.openDefaultCredentialCache();
             cacheAccessible = True;
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-accessible", True,
+                "default credential cache is accessible", "info");
 
             if (cc.hasPrimaryPrincipal()) {
                 Qore::Krb5::Krb5Principal principal = cc.getPrimaryPrincipal();
                 cachePrincipal = principal.toString();
                 string realm = principal.getRealm();
+                addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-principal", True,
+                    sprintf("credential cache primary principal is %y", cachePrincipal), "info");
 
                 list<hash<Qore::Krb5::Krb5CredentialsInfo>> credsList = cc.listCredentials();
                 cacheCredentialCount = credsList.size();
 
                 if (cacheCredentialCount == 0) {
-                    push warnings, "credential cache has a primary principal but no credentials";
+                    addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-credentials", False,
+                        "credential cache has a primary principal but no credentials",
+                        requireTgt ? "error" : "warning",
+                        "acquire fresh credentials before starting Kerberos-authenticated work");
+                } else {
+                    addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-credentials", True,
+                        sprintf("credential cache contains %d credential(s)", cacheCredentialCount), "info");
                 }
 
                 string tgtServer = sprintf("krbtgt/%s@%s", realm, realm);
                 foreach hash<Qore::Krb5::Krb5CredentialsInfo> entry in (credsList) {
                     if (entry.server == tgtServer) {
-                        tgtLifecycle = getCredentialLifecycleInfo(entry, 300, NOTHING, logger);
+                        tgtFound = True;
+                        tgtLifecycle = getCredentialLifecycleInfo(entry, renewThreshold, NOTHING, logger);
                         if (tgtLifecycle.expired) {
-                            push warnings, sprintf("TGT is expired (expired %d seconds ago)",
-                                -tgtLifecycle.remaining_seconds);
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-valid", False,
+                                sprintf("TGT is expired (expired %d seconds ago)", -tgtLifecycle.remaining_seconds),
+                                requireTgt ? "error" : "warning",
+                                "acquire fresh initial credentials");
                         } else if (tgtLifecycle.within_renewal_threshold) {
-                            push warnings, sprintf("TGT expires in %d seconds (within renewal threshold)",
-                                tgtLifecycle.remaining_seconds);
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-renewal-threshold",
+                                False, sprintf("TGT expires in %d seconds (within renewal threshold)",
+                                tgtLifecycle.remaining_seconds), "warning",
+                                "renew credentials before expiry");
+                        } else {
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-valid", True,
+                                sprintf("TGT is valid for %d more seconds", tgtLifecycle.remaining_seconds), "info");
+                        }
+                        if (exists minTgtLifetime && !tgtLifecycle.expired
+                                && tgtLifecycle.remaining_seconds < minTgtLifetime) {
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-min-lifetime", False,
+                                sprintf("TGT remaining lifetime %d seconds is below required minimum %d seconds",
+                                    tgtLifecycle.remaining_seconds, minTgtLifetime), "error",
+                                "renew credentials or acquire fresh initial credentials");
+                        } else if (exists minTgtLifetime && !tgtLifecycle.expired) {
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-min-lifetime", True,
+                                sprintf("TGT remaining lifetime %d seconds satisfies minimum %d seconds",
+                                    tgtLifecycle.remaining_seconds, minTgtLifetime), "info");
                         }
                         if (!tgtLifecycle.renewable && !tgtLifecycle.expired) {
-                            push warnings, "TGT is not renewable";
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-renewable", False,
+                                "TGT is not renewable", "warning",
+                                "request renewable initial credentials if long-running renewal is required");
+                        } else if (tgtLifecycle.renewable) {
+                            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-renewable", True,
+                                sprintf("TGT is renewable for %d more seconds", tgtLifecycle.renewable_seconds),
+                                "info");
                         }
                         break;
                     }
                 }
 
-                if (!exists tgtLifecycle && cacheCredentialCount > 0) {
-                    push warnings, sprintf("no TGT (krbtgt/%s@%s) found among %d cached credentials",
-                        realm, realm, cacheCredentialCount);
+                if (!tgtFound && cacheCredentialCount > 0) {
+                    addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-present", False,
+                        sprintf("no TGT (krbtgt/%s@%s) found among %d cached credentials",
+                            realm, realm, cacheCredentialCount),
+                        requireTgt ? "error" : "warning",
+                        "acquire initial credentials so service-ticket requests can be made");
+                } else if (tgtFound) {
+                    addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-tgt-present", True,
+                        sprintf("TGT %y found in default credential cache", tgtServer), "info");
                 }
             } else {
-                push warnings, "credential cache has no primary principal";
+                addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-principal", False,
+                    "credential cache has no primary principal",
+                    requireCache || requireTgt ? "error" : "warning",
+                    "initialize the cache with initial credentials");
             }
         } catch (hash<ExceptionInfo> ex) {
             cacheError = sprintf("%s: %s", ex.err, ex.desc);
-            push errors, sprintf("default credential cache not accessible: %s", cacheError);
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-cache-accessible", False,
+                sprintf("default credential cache not accessible: %s", cacheError),
+                requireCache || requireTgt ? "error" : "warning",
+                "acquire initial credentials or set KRB5CCNAME to an accessible cache");
         }
 
         logEnvironmentValidation(logger, sprintf("cache accessible=%y principal=%y creds=%y tgt_found=%y",
             cacheAccessible, exists cachePrincipal ? cachePrincipal : NOTHING,
             exists cacheCredentialCount ? cacheCredentialCount : NOTHING,
-            exists tgtLifecycle));
+            tgtFound));
 
         bool keytabAccessible = False;
         *string keytabError;
@@ -886,10 +1279,15 @@ if (!env.healthy) {
         try {
             auto kt = ctx.openDefaultKeytab();
             keytabAccessible = True;
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-accessible", True,
+                "default keytab is accessible", "info");
 
             if (kt.hasContent()) {
                 list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> ktEntries = kt.listEntries();
                 keytabEntryCount = ktEntries.size();
+                addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-entries", True,
+                    sprintf("default keytab contains %d entr%s", keytabEntryCount,
+                        keytabEntryCount == 1 ? "y" : "ies"), "info");
 
                 hash<string, bool> seen();
                 foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (ktEntries) {
@@ -897,13 +1295,11 @@ if (!env.healthy) {
                 }
                 keytabPrincipals = keys seen;
 
-                if (exists service_principal) {
-                    Qore::Krb5::Krb5Principal spObj(service_principal);
-                    string spString = spObj.toString();
+                if (exists servicePrincipalString) {
                     int highestKvno = 0;
                     bool found = False;
                     foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (ktEntries) {
-                        if (entry.principal == spString) {
+                        if (entry.principal == servicePrincipalString) {
                             found = True;
                             if (entry.kvno > highestKvno) {
                                 highestKvno = entry.kvno;
@@ -913,17 +1309,29 @@ if (!env.healthy) {
                     servicePrincipalInKeytab = found;
                     if (found) {
                         servicePrincipalKvno = highestKvno;
+                        addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-service-principal", True,
+                            sprintf("service principal %y found in default keytab with highest kvno %d",
+                                servicePrincipalString, highestKvno), "info");
                     } else {
-                        push warnings, sprintf("service principal %y not found in default keytab", spString);
+                        addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-service-principal", False,
+                            sprintf("service principal %y not found in default keytab", servicePrincipalString),
+                            requireServicePrincipal ? "error" : "warning",
+                            "install the service principal in the default keytab or use the correct keytab");
                     }
                 }
             } else {
                 keytabEntryCount = 0;
-                push warnings, "default keytab is empty";
+                addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-entries", False,
+                    "default keytab is empty",
+                    requireKeytab || requireServicePrincipal ? "error" : "warning",
+                    "install service keys into the default keytab");
             }
         } catch (hash<ExceptionInfo> ex) {
             keytabError = sprintf("%s: %s", ex.err, ex.desc);
-            push warnings, sprintf("default keytab not accessible: %s", keytabError);
+            addEnvironmentCheck(\checks, \warnings, \errors, "default-keytab-accessible", False,
+                sprintf("default keytab not accessible: %s", keytabError),
+                requireKeytab || requireServicePrincipal ? "error" : "warning",
+                "set KRB5_KTNAME or configure an accessible default keytab");
         }
 
         logEnvironmentValidation(logger, sprintf("keytab accessible=%y entries=%y principals=%d svc_found=%y",
@@ -950,11 +1358,57 @@ if (!env.healthy) {
             "service_principal_kvno": servicePrincipalKvno,
             "warnings": warnings,
             "errors": errors,
+            "checks": checks,
             "healthy": healthy,
         };
 
         logEnvironmentValidation(logger, sprintf("result healthy=%y warnings=%d errors=%d",
             healthy, warnings.size(), errors.size()));
+        return rv;
+    }
+
+    #! Creates a GSSAPI initiator context using S4U2Self impersonation
+    /** This helper wraps the supported GSS-level constrained delegation flow:
+        a service credential is used to obtain an impersonated initiator
+        credential for \a user_principal, then a client context is created for
+        \a target_service with that credential.
+
+        @param target_service target service principal or host-based service
+        name, depending on \a opts.name_type
+        @param service_cred service credential allowed by the KDC to
+        impersonate users
+        @param user_principal user principal to impersonate
+        @param opts optional @ref Qore::Krb5::GssClientContextOptions
+        @param logger optional logger for safe diagnostics; raw GSS tokens and
+        credential material are not logged
+
+        @return initiator context bound to the impersonated credential
+
+        @throw KRB5-GSS-ARG-ERROR if arguments are invalid
+        @throw KRB5-GSS-ERROR if S4U2Self or target-name import fails
+        @throw KRB5-NOT-SUPPORTED if the platform lacks S4U2Self support
+    */
+    public auto sub createImpersonatedClientContext(
+            string target_service,
+            Qore::Krb5::GssCredential service_cred,
+            Qore::Krb5::Krb5Principal user_principal,
+            *hash<Qore::Krb5::GssClientContextOptions> opts = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        if (!target_service) {
+            throw "KRB5-GSS-ARG-ERROR", "target service principal cannot be empty";
+        }
+
+        logS4u(logger, sprintf("creating impersonated GSS client context target=%y user=%y",
+            target_service, user_principal.toString()));
+
+        Qore::Krb5::GssCredential impersonated =
+            Qore::Krb5::GssCredential::impersonateName(service_cred, user_principal);
+
+        if (exists opts) {
+            Qore::Krb5::GssClientContext rv(target_service, impersonated, opts);
+            return rv;
+        }
+        Qore::Krb5::GssClientContext rv(target_service, impersonated);
         return rv;
     }
 
@@ -1646,6 +2100,49 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
         }
     }
 
+    #! Validates credential maintenance options
+    sub validateCredentialCacheMaintenanceOptions(*hash<CredentialCacheMaintenanceOptions> opts) {
+        if (exists opts && exists opts.renew_threshold_seconds && opts.renew_threshold_seconds < 0) {
+            throw "KRB5-CACHE-MAINTENANCE-ERROR", "renewal threshold cannot be negative";
+        }
+        if (exists opts && exists opts.service_principals) {
+            foreach string servicePrincipal in (opts.service_principals) {
+                if (!servicePrincipal) {
+                    throw "KRB5-CACHE-MAINTENANCE-ERROR", "service principal cannot be empty";
+                }
+                Qore::Krb5::Krb5Principal p(servicePrincipal);
+            }
+        }
+    }
+
+    #! Adds or throws a cache maintenance error
+    sub addMaintenanceError(reference<list<string>> errors, bool fail_fast, string message) {
+        if (fail_fast) {
+            throw "KRB5-CACHE-MAINTENANCE-ERROR", message;
+        }
+        push errors, message;
+    }
+
+    #! Builds a typed credential-cache maintenance result
+    hash<CredentialCacheMaintenanceResult> sub makeCredentialCacheMaintenanceResult(*string cache_name,
+            *string principal, bool dry_run, bool renewed, bool was_expired,
+            *hash<CredentialLifecycleInfo> tgt_lifecycle,
+            list<hash<ServiceTicketMaintenanceResult>> service_tickets,
+            list<string> warnings, list<string> errors) {
+        return <CredentialCacheMaintenanceResult>{
+            "cache_name": cache_name,
+            "principal": principal,
+            "dry_run": dry_run,
+            "renewed": renewed,
+            "was_expired": was_expired,
+            "tgt_lifecycle": tgt_lifecycle,
+            "service_tickets": service_tickets,
+            "warnings": warnings,
+            "errors": errors,
+            "healthy": errors.size() == 0,
+        };
+    }
+
     #! Validates keytab rotation filters
     sub validateKeytabRotationFilter(*int kvno, *int enctype) {
         if (exists kvno && kvno < 0) {
@@ -1653,6 +2150,28 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
         }
         if (exists enctype && enctype < 0) {
             throw "KRB5-KEYTAB-ROTATION-ERROR", "enctype cannot be negative";
+        }
+    }
+
+    #! Adds a structured environment validation check and mirrors failures to legacy lists
+    sub addEnvironmentCheck(reference<list<hash<KerberosEnvironmentCheckInfo>>> checks, reference<list<string>> warnings,
+            reference<list<string>> errors, string check_id, bool ok, string message, string severity,
+            *string remediation = NOTHING) {
+        hash<KerberosEnvironmentCheckInfo> check = <KerberosEnvironmentCheckInfo>{
+            "check_id": check_id,
+            "severity": severity,
+            "ok": ok,
+            "message": message,
+            "remediation": remediation,
+        };
+        push checks, check;
+
+        if (!ok) {
+            if (severity == "error") {
+                push errors, message;
+            } else if (severity == "warning") {
+                push warnings, message;
+            }
         }
     }
 
@@ -1698,10 +2217,24 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
         }
     }
 
+    #! Logs safe credential-cache maintenance diagnostics
+    sub logCredentialMaintenance(*Qore::Logger::LoggerInterface logger, string message) {
+        if (logger) {
+            logger.debug("Krb5Util credential maintenance: %s", message);
+        }
+    }
+
     #! Logs safe environment validation diagnostics
     sub logEnvironmentValidation(*Qore::Logger::LoggerInterface logger, string message) {
         if (logger) {
             logger.debug("Krb5Util environment: %s", message);
+        }
+    }
+
+    #! Logs safe S4U diagnostics without raw credential material
+    sub logS4u(*Qore::Logger::LoggerInterface logger, string message) {
+        if (logger) {
+            logger.debug("Krb5Util S4U: %s", message);
         }
     }
 }

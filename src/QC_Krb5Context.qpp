@@ -354,9 +354,12 @@ list<hash<Krb5CredentialCacheInfo>> Krb5Context::listCredentialCaches() {
 }
 
 //! Acquires credentials for a target service via S4U2Proxy constrained delegation
-/** Uses an evidence ticket (typically obtained via S4U2Self) and a TGT
-    from the provided cache to request a service ticket for the target
-    service principal on behalf of the user identified by the evidence ticket.
+/** Uses a caller-supplied Kerberos evidence ticket and a TGT from the
+    provided cache to request a service ticket for the target service
+    principal on behalf of the user identified by the evidence ticket. This
+    low-level API expects evidence as @ref Qore::Krb5::Krb5Credentials; the
+    GSS-level @ref Qore::Krb5::GssCredential::impersonateName() result is a
+    different type and is used by @ref Krb5Util::createImpersonatedClientContext().
 
     Requires MIT krb5 1.8 or later and KDC configuration that allows the
     service principal to perform constrained delegation to the target.
