@@ -767,6 +767,19 @@ string authHeader = "Negotiate " + Krb5Util::negotiateSpnegoToken(step.token);
     }
 
     #! Parses an HTTP Negotiate authorization header and extracts the contained GSS token as hex
+    /** Accepts either a bare \c "Negotiate <base64-token>" value or a full
+        \c "Authorization: Negotiate <base64-token>" header line. The SPNEGO
+        NegTokenInit envelope is unwrapped and the mechToken is returned.
+
+        @param header HTTP Negotiate authorization header value or full header line
+        @param logger optional logger for safe diagnostics; raw token data is
+        not logged
+
+        @return hex-encoded GSS token extracted from the mechToken field
+
+        @throw KRB5-SPNEGO-ERROR if the header is not a Negotiate value, does
+        not contain a token, or the SPNEGO envelope cannot be parsed
+    */
     public string sub parseNegotiateAuthorizationHeader(string header,
             *Qore::Logger::LoggerInterface logger = NOTHING) {
         return parseSpnegoInitialToken(extractNegotiateHeaderToken(header, logger), logger);
@@ -982,8 +995,15 @@ string authHeader = "Negotiate " + Krb5Util::negotiateSpnegoToken(step.token);
         }
 
         try {
-            parse_base64_string(token);
+            # Validate the base64 encoding before returning
+            binary decoded = parse_base64_string(token);
+            if (!decoded.size()) {
+                throw "KRB5-SPNEGO-ERROR", "Negotiate token base64 decodes to empty data";
+            }
         } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "KRB5-SPNEGO-ERROR") {
+                rethrow;
+            }
             throw "KRB5-SPNEGO-ERROR", sprintf("invalid Negotiate token base64: %s", ex.desc);
         }
 
