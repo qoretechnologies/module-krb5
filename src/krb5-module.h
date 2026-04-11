@@ -57,6 +57,9 @@ DLLLOCAL TypedHashDecl* init_hashdecl_Krb5KeytabEntryInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5CredentialsInfo(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_Krb5InitialCredentialsOptions(QoreNamespace& ns);
 DLLLOCAL TypedHashDecl* init_hashdecl_GssClientContextOptions(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssStepInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssWrapInfo(QoreNamespace& ns);
+DLLLOCAL TypedHashDecl* init_hashdecl_GssUnwrapInfo(QoreNamespace& ns);
 
 extern QoreClass* QC_KRB5CONTEXT;
 extern qore_classid_t CID_KRB5CONTEXT;
@@ -77,6 +80,9 @@ DLLLOCAL extern TypedHashDecl* hashdeclKrb5KeytabEntryInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5CredentialsInfo;
 DLLLOCAL extern TypedHashDecl* hashdeclKrb5InitialCredentialsOptions;
 DLLLOCAL extern TypedHashDecl* hashdeclGssClientContextOptions;
+DLLLOCAL extern TypedHashDecl* hashdeclGssStepInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclGssWrapInfo;
+DLLLOCAL extern TypedHashDecl* hashdeclGssUnwrapInfo;
 
 DLLLOCAL bool decode_hex(const char* str, std::vector<unsigned char>& out, ExceptionSink* xsink,
     const char* context);

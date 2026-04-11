@@ -30,8 +30,6 @@
 //! Options for initial credential acquisition
 /** These options map to MIT Kerberos initial-credential options and are
     intended for noninteractive service and Active Directory authentication.
-
-    @since krb5 0.1
 */
 hashdecl Qore::Krb5::Krb5InitialCredentialsOptions {
     //! Service principal for the ticket request; omit for the default TGT service
@@ -83,13 +81,11 @@ hashdecl Qore::Krb5::Krb5InitialCredentialsOptions {
 //! Kerberos runtime context helper
 /** This class exposes default realm and credential-cache helpers that are
     useful for service configuration, diagnostics, and test setup.
-
-    @since krb5 0.1
 */
 qclass Krb5Context [arg=QoreKrb5Context* ctx; ns=Qore::Krb5; dom=FILESYSTEM; flags=final];
 
 //! Creates a Kerberos runtime context
-/**
+/** @throw KRB5-INIT-ERROR if the underlying Kerberos context cannot be initialized
 */
 Krb5Context::constructor() {
     SimpleRefHolder<QoreKrb5Context> c(new QoreKrb5Context(xsink));
@@ -100,28 +96,29 @@ Krb5Context::constructor() {
 }
 
 //! Returns the default Kerberos realm from the local configuration
-/**
+/** @throw KRB5-REALM-ERROR if no default realm is configured on this host
 */
 string Krb5Context::getDefaultRealm() [flags=CONSTANT] {
     return ctx->getDefaultRealm(xsink);
 }
 
 //! Returns the configured default credential-cache name
-/**
+/** @throw KRB5-CACHE-ERROR if no default credential cache name is available
 */
 string Krb5Context::getDefaultCredentialCacheName() [flags=CONSTANT] {
     return ctx->getDefaultCredentialCacheName(xsink);
 }
 
 //! Returns the configured default keytab name
-/**
+/** @throw KRB5-KEYTAB-ERROR if no default keytab name is available
 */
 string Krb5Context::getDefaultKeytabName() [flags=CONSTANT] {
     return ctx->getDefaultKeytabName(xsink);
 }
 
 //! Opens the default credential cache
-/**
+/** @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-CACHE-ERROR if the default credential cache cannot be opened
 */
 Krb5CredentialCache Krb5Context::openDefaultCredentialCache() {
     SimpleRefHolder<QoreKrb5CredentialCache> cache(ctx->openDefaultCredentialCache(xsink));
@@ -137,6 +134,9 @@ Krb5CredentialCache Krb5Context::openDefaultCredentialCache() {
 //! Opens a credential cache by name
 /** @param cache_name a cache spec such as \c "FILE:/tmp/krb5cc_test" or
     \c "MEMORY:module-krb5"
+
+    @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-CACHE-ERROR if the cache name is empty or cannot be resolved
 */
 Krb5CredentialCache Krb5Context::openCredentialCache(string cache_name) {
     SimpleRefHolder<QoreKrb5CredentialCache> cache(ctx->openCredentialCache(cache_name->c_str(), xsink));
@@ -150,7 +150,8 @@ Krb5CredentialCache Krb5Context::openCredentialCache(string cache_name) {
 }
 
 //! Opens the default keytab
-/**
+/** @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-KEYTAB-ERROR if the default keytab cannot be opened
 */
 Krb5Keytab Krb5Context::openDefaultKeytab() {
     SimpleRefHolder<QoreKrb5Keytab> keytab(ctx->openDefaultKeytab(xsink));
@@ -166,6 +167,9 @@ Krb5Keytab Krb5Context::openDefaultKeytab() {
 //! Opens a keytab by name
 /** @param keytab_name a keytab spec such as \c "FILE:/etc/krb5.keytab" or
     \c "MEMORY:module-krb5"
+
+    @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-KEYTAB-ERROR if the keytab name is empty or cannot be resolved
 */
 Krb5Keytab Krb5Context::openKeytab(string keytab_name) {
     SimpleRefHolder<QoreKrb5Keytab> keytab(ctx->openKeytab(keytab_name->c_str(), xsink));
@@ -179,9 +183,17 @@ Krb5Keytab Krb5Context::openKeytab(string keytab_name) {
 }
 
 //! Creates and initializes an in-memory credential cache with the given principal
-/** @param principal the primary principal to associate with the cache
+/** The MIT Kerberos \c MEMORY cache backend is process-wide: reusing the same
+    \a cache_name returns the same underlying cache, so callers that need
+    isolation should use distinct cache names.
+
+    @param principal the primary principal to associate with the cache
     @param cache_name the in-memory cache identifier without the \c MEMORY:
     prefix
+
+    @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-CACHE-ERROR if \a cache_name is empty or the cache cannot be
+    initialized with the supplied principal
 */
 Krb5CredentialCache Krb5Context::createMemoryCredentialCache(Krb5Principal[QoreKrb5Principal] principal,
         string cache_name) {
@@ -197,15 +209,21 @@ Krb5CredentialCache Krb5Context::createMemoryCredentialCache(Krb5Principal[QoreK
 
 //! Acquires initial credentials using a password
 /** This method is noninteractive and does not log or expose the password.
+    The operation checks cooperative cancellation before contacting the KDC.
 
     @param principal client principal
     @param password client password
     @param opts optional @ref Qore::Krb5::Krb5InitialCredentialsOptions
 
-    @throw KRB5-INIT-CREDS-ERROR if credentials cannot be acquired
+    @throw KRB5-INIT-CREDS-ERROR if the password is empty, option values
+    are invalid, or the KDC rejects the request
+    @throw KRB5-SANDBOX-ERROR if any FAST, input, or output cache option
+    names a backend that is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if any option-specified cache lies
+    outside the filesystem sandbox
 */
 Krb5Credentials Krb5Context::acquireCredentialsWithPassword(Krb5Principal[QoreKrb5Principal] principal,
-        string password, *hash<Krb5InitialCredentialsOptions> opts) {
+        string password, *hash<Krb5InitialCredentialsOptions> opts) [dom=NETWORK] {
     SimpleRefHolder<QoreKrb5Credentials> creds(ctx->acquireCredentialsWithPassword(**principal, password->c_str(),
         opts, xsink));
     if (*xsink) {
@@ -218,17 +236,24 @@ Krb5Credentials Krb5Context::acquireCredentialsWithPassword(Krb5Principal[QoreKr
 }
 
 //! Acquires initial credentials using a keytab
-/** This method reads keys from the provided keytab and returns the acquired
-    credentials without automatically writing them to the default cache.
+/** This method reads keys from the provided keytab and returns the
+    acquired credentials without automatically writing them to the default
+    cache. The operation checks cooperative cancellation before contacting
+    the KDC.
 
     @param principal client principal
     @param keytab keytab containing a matching client key
     @param opts optional @ref Qore::Krb5::Krb5InitialCredentialsOptions
 
-    @throw KRB5-INIT-CREDS-ERROR if credentials cannot be acquired
+    @throw KRB5-INIT-CREDS-ERROR if option values are invalid, the keytab
+    has no matching entry, or the KDC rejects the request
+    @throw KRB5-SANDBOX-ERROR if the keytab backend or any option-specified
+    cache is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if the keytab or any option-specified
+    cache lies outside the filesystem sandbox
 */
 Krb5Credentials Krb5Context::acquireCredentialsWithKeytab(Krb5Principal[QoreKrb5Principal] principal,
-        Krb5Keytab[QoreKrb5Keytab] keytab, *hash<Krb5InitialCredentialsOptions> opts) {
+        Krb5Keytab[QoreKrb5Keytab] keytab, *hash<Krb5InitialCredentialsOptions> opts) [dom=NETWORK] {
     SimpleRefHolder<QoreKrb5Credentials> creds(ctx->acquireCredentialsWithKeytab(**principal, **keytab, opts, xsink));
     if (*xsink) {
         return QoreValue();

@@ -28,7 +28,7 @@
 #include "krb5-module.h"
 
 //! Metadata for a single keytab entry
-/** @since krb5 0.1
+/**
 */
 hashdecl Qore::Krb5::Krb5KeytabEntryInfo {
     //! Principal stored in the entry
@@ -53,13 +53,11 @@ hashdecl Qore::Krb5::Krb5KeytabEntryInfo {
 //! Kerberos keytab wrapper
 /** This class wraps a single keytab and provides service-key metadata access
     and deterministic entry-management helpers.
-
-    @since krb5 0.1
 */
 qclass Krb5Keytab [arg=QoreKrb5Keytab* keytab; ns=Qore::Krb5; dom=FILESYSTEM; flags=final];
 
 //! Returns the full keytab specifier
-/**
+/** @throw KRB5-KEYTAB-ERROR if the keytab name cannot be read
 */
 string Krb5Keytab::getName() [flags=CONSTANT] {
     return keytab->getName(xsink);
@@ -73,7 +71,9 @@ string Krb5Keytab::getType() [flags=CONSTANT] {
 }
 
 //! Returns True if the keytab contains at least one entry
-/**
+/** @throw KRB5-KEYTAB-ERROR if the keytab cannot be inspected
+    @throw KRB5-SANDBOX-ERROR if the keytab backend is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if a file-backed keytab is outside the filesystem sandbox
 */
 bool Krb5Keytab::hasContent() [flags=CONSTANT] {
     return keytab->hasContent(xsink);
@@ -83,7 +83,11 @@ bool Krb5Keytab::hasContent() [flags=CONSTANT] {
 /** @param principal principal for the entry
     @param key_hex raw key material encoded as hexadecimal
     @param enctype Kerberos enctype identifier
-    @param kvno key version number
+    @param kvno key version number; defaults to \c 1 when not supplied
+
+    @throw KRB5-KEYTAB-ERROR if the entry cannot be added or the key hex is invalid
+    @throw KRB5-SANDBOX-ERROR if the keytab backend is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if a file-backed keytab is outside the filesystem sandbox
 */
 nothing Krb5Keytab::addEntry(Krb5Principal[QoreKrb5Principal] principal, string key_hex, int enctype,
         *int kvno) {
@@ -94,6 +98,10 @@ nothing Krb5Keytab::addEntry(Krb5Principal[QoreKrb5Principal] principal, string 
 /** @param principal principal to match
     @param kvno key version number, or 0 for the highest available kvno
     @param enctype Kerberos enctype identifier, or 0 for any enctype
+
+    @throw KRB5-KEYTAB-ERROR if no matching entry is found or the keytab cannot be read
+    @throw KRB5-SANDBOX-ERROR if the keytab backend is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if a file-backed keytab is outside the filesystem sandbox
 */
 hash<Krb5KeytabEntryInfo> Krb5Keytab::getEntry(Krb5Principal[QoreKrb5Principal] principal, *int kvno,
         *int enctype) [flags=CONSTANT] {
@@ -102,7 +110,11 @@ hash<Krb5KeytabEntryInfo> Krb5Keytab::getEntry(Krb5Principal[QoreKrb5Principal] 
 }
 
 //! Lists all entries in the keytab
-/**
+/** @return a list of @ref Qore::Krb5::Krb5KeytabEntryInfo hashes, one per keytab entry
+
+    @throw KRB5-KEYTAB-ERROR if the keytab cannot be enumerated
+    @throw KRB5-SANDBOX-ERROR if the keytab backend is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if a file-backed keytab is outside the filesystem sandbox
 */
 list<hash<Krb5KeytabEntryInfo>> Krb5Keytab::listEntries() [flags=CONSTANT] {
     return keytab->listEntries(xsink);

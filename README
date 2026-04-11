@@ -1,63 +1,66 @@
-Qore krb5 module
+Qore krb5 Module
+================
 
-INTRODUCTION
-------------
-The Qore krb5 module provides Kerberos 5 and GSSAPI primitives for Qore.
-The binary module is named `krb5`; Qore-language helpers are provided by the
-separate `Krb5Util` module to avoid filename conflicts on case-insensitive
-filesystems.
+The Qore krb5 module provides Kerberos 5 and GSSAPI primitives for Qore so
+that Qore code and Qorus integration services can participate in enterprise
+Kerberos-authenticated networks as first-class citizens, alongside native
+Java and .NET services.
 
-This initial implementation provides:
-- Kerberos default realm and credential-cache helpers
-- Kerberos initial credential acquisition from passwords and keytabs
-- Kerberos credential metadata and cache store/list helpers
-- Kerberos default keytab and keytab entry-management helpers
-- in-memory credential-cache initialization for tests and service setup
-- filesystem sandbox enforcement for file-backed credential caches
-- filesystem sandbox enforcement for file-backed keytabs
-- Kerberos principal parsing, enterprise principal parsing, and introspection
-- explicit GSSAPI credentials imported from Kerberos credential caches or client keytabs
-- GSSAPI initiator target-name handling
-- GSSAPI context stepping with hex-encoded tokens and configurable initiator flags
-- GSSAPI channel bindings for hardened SASL/GSSAPI deployments
-- GSSAPI message wrap/unwrap helpers for negotiated integrity and confidentiality layers
-- a `Krb5Util` helper module for Qore-language Kerberos utilities
+The binary module is named `krb5`; a small Qore-language helper module is
+provided as `Krb5Util`.
 
-Initial credential acquisition supports AD-oriented security options such as
-KDC canonicalization, Windows PAC requests, requested enctypes, FAST armor
-credential caches, and input/output credential caches.
+The module provides:
 
-GSSAPI initiator contexts can be bound to explicit credentials, which avoids
-process-global default-cache assumptions in multi-tenant Qorus services.
-Completed GSSAPI contexts can wrap and unwrap messages, enabling SASL/GSSAPI
-security layer implementations to request integrity or confidentiality when an
-enterprise policy requires it.
-Channel-binding application data can be supplied explicitly, for example for
-LDAP over TLS deployments that enforce endpoint binding.
+- Kerberos realm, credential-cache, and keytab discovery
+- Kerberos initial credential acquisition from passwords and keytabs, with
+  noninteractive service use, KDC canonicalization, PAC requests, enctype
+  restriction, and FAST armor credential caches
+- Credential metadata and credential-cache store/list/enumerate operations
+- In-memory credential caches and keytabs for tests and service setup
+- Filesystem sandbox enforcement for file-backed credential caches and
+  keytabs
+- Kerberos principal parsing, enterprise (UPN) principal parsing, and
+  structured introspection
+- Explicit GSSAPI credentials imported from Kerberos credential caches or
+  client keytabs, so GSSAPI code does not need to rely on process-global
+  default credentials
+- Initiator-side GSSAPI security contexts with configurable flags, lifetime,
+  and mechanism selection
+- GSSAPI channel bindings, including RFC 5929 `tls-server-end-point`
+  application data for hardened SASL/GSSAPI deployments
+- GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity
+  and confidentiality layers
+- a `Krb5Util` helper module with Qore-language Kerberos utilities
 
-The module is designed as the security foundation for enterprise LDAP and
-Active Directory integrations on Linux.
-
-BUILDING
+Building
 --------
-Requires qore 2.0+ and MIT Kerberos / GSSAPI development libraries.
 
-CMake build:
+Requires Qore 2.0 or later and MIT Kerberos / GSSAPI development libraries.
+
   mkdir build && cd build
-  cmake .. -DCMAKE_BUILD_TYPE=Debug
+  cmake .. -DCMAKE_BUILD_TYPE=Release
   cmake --build .
 
-To run the local tests from the repo root:
+To run the tests from the repository root:
+
   test/run-tests.sh
 
+Using the module
+----------------
+
 Qore code that needs the binary API should use:
+
   %requires krb5
 
 Qore code that needs helper functions such as
-Krb5Util::getHostBasedServicePrincipal() should use:
+`Krb5Util::getHostBasedServicePrincipal()` should use:
+
   %requires Krb5Util
 
-QUESTIONS
+See the generated HTML documentation for the class reference, security model,
+use cases, and runnable examples.
+
+Questions
 ---------
-Please direct any questions to:
-david@qore.org
+
+Please direct questions to david@qore.org.

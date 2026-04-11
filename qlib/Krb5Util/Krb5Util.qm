@@ -25,7 +25,7 @@
 %modern
 
 module Krb5Util {
-    version = "0.1.0";
+    version = "1.0.0";
     desc = "Kerberos 5 and GSSAPI utility module";
     author = "Qore Technologies, s.r.o.";
     url = "https://qore.org";
@@ -36,18 +36,143 @@ module Krb5Util {
 
 /** @mainpage Krb5Util Module
 
+    @tableofcontents
+
     @section krb5utilintro Krb5Util Module Introduction
 
-    The \c Krb5Util module provides small Qore-language helpers on top of the
-    binary \c krb5 module. The utility module intentionally uses a distinct
-    name from \c krb5 to avoid conflicts on case-insensitive filesystems.
+    The \c Krb5Util module provides small %Qore-language helpers on top of
+    the binary \c krb5 module:
 
-    Binary classes and constants remain in the \c Qore::Krb5 namespace; helper
-    functions are exported from the \c Krb5Util namespace.
+    - @ref Krb5Util::getHostBasedServicePrincipal() builds a host-based
+      Kerberos 5 service principal string
+    - @ref Krb5Util::parseHostBasedServicePrincipal() splits a host-based
+      service principal into its components
+    - @ref Krb5Util::buildTlsServerEndPointChannelBindingHex() builds the
+      <a href="https://datatracker.ietf.org/doc/html/rfc5929">RFC 5929</a>
+      \c tls-server-end-point GSSAPI channel-binding application data from
+      a TLS server certificate hash, ready to pass to
+      @ref Qore::Krb5::GssClientContextOptions::channel_binding_application_data_hex
+
+    Binary classes and constants remain in the \c Qore::Krb5 namespace;
+    helper functions are exported from the \c Krb5Util namespace.
+
+    @section krb5utilexample Example
+
+    @code{.py}
+%requires Krb5Util
+
+# "ldap/ad.example.com@EXAMPLE.COM"
+string service = Krb5Util::getHostBasedServicePrincipal(
+    "ldap", "ad.example.com", "EXAMPLE.COM");
+
+hash<Krb5Util::Krb5HostBasedServicePrincipalInfo> parts =
+    Krb5Util::parseHostBasedServicePrincipal(service);
+# parts.service == "ldap"
+# parts.host    == "ad.example.com"
+# parts.realm   == "EXAMPLE.COM"
+    @endcode
 */
 
+#! The public \c Krb5Util namespace
 public namespace Krb5Util {
+    #! Parsed components of a host-based Kerberos service principal
+    public hashdecl Krb5HostBasedServicePrincipalInfo {
+        #! The service component, for example \c "HTTP" or \c "ldap"
+        string service;
+
+        #! The host component, for example \c "qorus.example.com"
+        string host;
+
+        #! The realm component, for example \c "EXAMPLE.COM"
+        string realm;
+    }
+
+    #! Builds a host-based Kerberos 5 service principal string of the form \c "service/host@REALM"
+    /** @par Example:
+        @code{.py}
+string sp = Krb5Util::getHostBasedServicePrincipal(
+    "ldap", "ad.example.com", "EXAMPLE.COM");
+# -> "ldap/ad.example.com@EXAMPLE.COM"
+        @endcode
+
+        @param service the service component, such as \c "HTTP", \c "ldap",
+        or \c "host"
+        @param host the fully-qualified DNS name of the host running the
+        service
+        @param realm the Kerberos realm
+
+        @return a host-based service principal string in the form
+        \c "service/host@REALM"
+    */
     public string sub getHostBasedServicePrincipal(string service, string host, string realm) {
         return sprintf("%s/%s@%s", service, host, realm);
+    }
+
+    #! Splits a host-based Kerberos 5 service principal of the form \c "service/host@REALM" into its components
+    /** @par Example:
+        @code{.py}
+hash<Krb5Util::Krb5HostBasedServicePrincipalInfo> info =
+    Krb5Util::parseHostBasedServicePrincipal("HTTP/qorus.example.com@EXAMPLE.COM");
+# info.service == "HTTP"
+# info.host    == "qorus.example.com"
+# info.realm   == "EXAMPLE.COM"
+        @endcode
+
+        @param principal_string a host-based service principal string
+
+        @return a @ref Krb5HostBasedServicePrincipalInfo hash with the
+        parsed \c service, \c host, and \c realm components
+
+        @throw KRB5-PRINCIPAL-ERROR if \a principal_string cannot be parsed
+        or is not a host-based service principal
+    */
+    public hash<Krb5HostBasedServicePrincipalInfo> sub parseHostBasedServicePrincipal(string principal_string) {
+        Qore::Krb5::Krb5Principal p(principal_string);
+        if (p.getComponentCount() != 2) {
+            throw "KRB5-PRINCIPAL-ERROR",
+                sprintf("principal %y is not a host-based service principal "
+                    "(expected 2 components, got %d)", principal_string, p.getComponentCount());
+        }
+        return <Krb5HostBasedServicePrincipalInfo>{
+            "service": p.getComponent(0),
+            "host": p.getComponent(1),
+            "realm": p.getRealm(),
+        };
+    }
+
+    #! Builds the RFC 5929 \c tls-server-end-point GSSAPI channel-binding application data as a hex-encoded string
+    /** The returned string is ready to assign to
+        @ref Qore::Krb5::GssClientContextOptions::channel_binding_application_data_hex.
+        Per
+        <a href="https://datatracker.ietf.org/doc/html/rfc5929#section-4">RFC
+        5929 §4</a>, the value is the ASCII constant
+        \c "tls-server-end-point:" followed by the hash of the server
+        certificate computed with the hash algorithm used in the certificate
+        signature (or SHA-256 when the signature uses MD5 or SHA-1), both
+        concatenated as a byte string. This function takes that hash as a
+        hex string and returns the full hex-encoded binding data.
+
+        @par Example:
+        @code{.py}
+# server_cert_hash_hex is the hex of the TLS server certificate hash
+# computed per RFC 5929 §4.1.
+string cb = Krb5Util::buildTlsServerEndPointChannelBindingHex(server_cert_hash_hex);
+
+hash<Qore::Krb5::GssClientContextOptions> opts();
+opts.channel_binding_application_data_hex = cb;
+Qore::Krb5::GssClientContext ctx("LDAP/ad.example.com@EXAMPLE.COM", opts);
+        @endcode
+
+        @param server_cert_hash_hex the TLS server certificate hash as a
+        hex string, computed per
+        <a href="https://datatracker.ietf.org/doc/html/rfc5929#section-4.1">RFC
+        5929 §4.1</a>
+
+        @return a hex-encoded string that is the concatenation of the ASCII
+        prefix \c "tls-server-end-point:" and \a server_cert_hash_hex
+    */
+    public string sub buildTlsServerEndPointChannelBindingHex(string server_cert_hash_hex) {
+        # "tls-server-end-point:" in hex
+        return "746c732d7365727665722d656e642d706f696e743a" + server_cert_hash_hex;
     }
 }

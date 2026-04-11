@@ -2,55 +2,66 @@
 
     @tableofcontents
 
-    @section krb5intro krb5 Binary Module Introduction
+    @section krb5intro Introduction
 
-    The \c krb5 module provides Kerberos 5 and GSSAPI primitives for secure
-    enterprise authentication integrations.
+    The \c krb5 module provides
+    <a href="https://web.mit.edu/kerberos/">Kerberos 5</a> and
+    <a href="https://datatracker.ietf.org/doc/html/rfc2743">GSSAPI</a>
+    primitives for %Qore. It is the foundation that lets %Qore code and
+    Qorus integration services participate as first-class citizens in
+    enterprise Kerberos-authenticated networks — for authentication against
+    <a href="https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/virtual-dc/active-directory-domain-services-overview">Active
+    Directory</a>,
+    <a href="https://datatracker.ietf.org/doc/html/rfc4511">LDAP</a>,
+    <a href="https://datatracker.ietf.org/doc/html/rfc4559">HTTP SPNEGO</a>
+    endpoints, databases, message buses, file shares, and any other
+    <a href="https://web.mit.edu/kerberos/krb5-latest/doc/basic/index.html">Kerberized</a>
+    service.
 
-    The Qore-language utility module is named \c Krb5Util rather than \c Krb5
-    so that it cannot conflict with the binary \c krb5 module on
-    case-insensitive filesystems.
+    @code{.py}
+%requires krb5
+%requires Krb5Util
 
-    This initial release focuses on:
-    - Kerberos default realm and credential-cache discovery
-    - Kerberos initial credential acquisition from passwords and keytabs
-    - Kerberos credential metadata and cache store/list operations
-    - Kerberos default keytab discovery and service-key entry management
-    - in-memory credential-cache initialization for tests and service setup
-    - filesystem sandbox enforcement for file-backed credential caches
-    - filesystem sandbox enforcement for file-backed keytabs
-    - Kerberos principal parsing, enterprise principal parsing, and validation
-    - explicit GSSAPI credential import from Kerberos caches and client keytabs
-    - GSSAPI target-name handling
-    - initiator-side GSSAPI token stepping with configurable flags and mechanisms
-    - GSSAPI channel bindings for hardened SASL/GSSAPI deployments
-    - GSSAPI message wrap/unwrap helpers for negotiated integrity and confidentiality layers
-
-    @section krb5securitymodel Security Model
-
-    The module is intended for security-sensitive use. It is designed to be
-    used with strict TLS, Kerberos, and Active Directory integrations without
-    weakening enterprise security policies. Initial credential acquisition
-    supports noninteractive service use, KDC canonicalization, PAC requests,
-    enctype restrictions, and FAST armor credential caches. GSSAPI initiator
-    contexts can be bound to explicit credentials to avoid global default-cache
-    assumptions in service processes, can include channel-binding application
-    data, and completed contexts can protect messages when SASL/GSSAPI integrity
-    or confidentiality layers are required.
+Qore::Krb5::Krb5Context ctx();
+printf("default realm: %s\n", ctx.getDefaultRealm());
+    @endcode
 
     @section krb5classes Main Classes
 
-    - @ref Qore::Krb5::Krb5Context
-    - @ref Qore::Krb5::Krb5Credentials
-    - @ref Qore::Krb5::Krb5CredentialCache
-    - @ref Qore::Krb5::Krb5Keytab
-    - @ref Qore::Krb5::Krb5Principal
-    - @ref Qore::Krb5::GssCredential
-    - @ref Qore::Krb5::GssClientContext
+    - @ref Qore::Krb5::Krb5Context — Kerberos runtime context, cache and
+      keytab discovery, and initial credential acquisition
+    - @ref Qore::Krb5::Krb5Principal — Kerberos principal parsing,
+      enterprise-principal
+      (<a href="https://learn.microsoft.com/en-us/windows/win32/ad/naming-properties">UPN</a>)
+      parsing, and introspection
+    - @ref Qore::Krb5::Krb5Credentials — Kerberos credential wrapper and
+      metadata
+    - @ref Qore::Krb5::Krb5CredentialCache — credential cache wrapper
+      (file-backed, in-memory, and other backends)
+    - @ref Qore::Krb5::Krb5Keytab — keytab wrapper for service-key lookup
+      and entry management
+    - @ref Qore::Krb5::GssCredential — explicit GSSAPI credential imported
+      from a Kerberos credential cache or client keytab
+    - @ref Qore::Krb5::GssClientContext — initiator-side GSSAPI security
+      context, token stepping,
+      <a href="https://datatracker.ietf.org/doc/html/rfc5929">channel
+      bindings</a>, and message wrap/unwrap
+
+    @section krb5pages Documentation Sections
+
+    - @ref krb5usecases — how the module fits the %Qore and Qorus ecosystems
+      and what integrations it enables
+    - @ref krb5security — the module's security model and guarantees
+    - @ref krb5examples — runnable examples for principal parsing,
+      credential acquisition, GSSAPI context stepping, channel bindings,
+      message protection, keytab setup, and filesystem-sandboxed usage
+    - @ref krb5utilintro in the \c Krb5Util %Qore-language helper module
+      documentation
 
     @section krb5util Utility Module
 
-    Use \c "%requires Krb5Util" for Qore-language helper functions such as
-    \c Krb5Util::getHostBasedServicePrincipal(). Binary classes and constants
-    remain in the \c Qore::Krb5 namespace.
+    Use \c "%requires Krb5Util" for %Qore-language helper functions such as
+    \c Krb5Util::getHostBasedServicePrincipal(); see @ref krb5utilintro for
+    details. Binary classes and constants remain in the \c Qore::Krb5
+    namespace.
 */

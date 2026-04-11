@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5...4.2)
 
-project(qore-krb5-module VERSION 0.1.0)
+project(qore-krb5-module VERSION 1.0.0)
 
 include(CheckCXXCompilerFlag)
 
@@ -51,6 +51,7 @@ set(module_name "krb5")
 
 set(QORE_DOX_TMPL_SRC
     docs/mainpage.doxygen.tmpl
+    docs/usecases.doxygen.tmpl
     docs/security.doxygen.tmpl
     docs/examples.doxygen.tmpl
 )
@@ -87,4 +88,7 @@ if (DOXYGEN_FOUND)
     qore_wrap_dox(QORE_DOX_SRC ${QORE_DOX_TMPL_SRC})
     add_custom_target(QORE_MOD_DOX_FILES DEPENDS ${QORE_DOX_SRC})
     add_dependencies(docs-module QORE_MOD_DOX_FILES)
+
+    # Two-phase doc build so the binary module's mainpage can @ref into Krb5Util.
+    qore_binary_module_two_phase_docs(${module_name} "Krb5Util")
 endif()

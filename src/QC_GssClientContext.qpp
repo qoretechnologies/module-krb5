@@ -28,15 +28,14 @@
 #include "krb5-module.h"
 
 //! Initiator-side GSSAPI client context
-/** This class is intentionally narrow in the first release. It supports target
-    name setup and iterative initiator token generation with hex-encoded tokens.
-
-    @since krb5 0.1
+/** This class supports target-name setup and iterative initiator token generation
+    with hex-encoded tokens, plus optional channel bindings and message wrap/unwrap
+    helpers for negotiated SASL/GSSAPI integrity or confidentiality layers.
 */
-qclass GssClientContext [arg=QoreGssClientContext* ctx; ns=Qore::Krb5; flags=final];
+qclass GssClientContext [arg=QoreGssClientContext* ctx; ns=Qore::Krb5; dom=NETWORK; flags=final];
 
 //! Options for GSSAPI initiator contexts
-/** @since krb5 0.1
+/**
 */
 hashdecl Qore::Krb5::GssClientContextOptions {
     //! Requested GSS flags bitmask; omit for the secure module default
@@ -64,9 +63,54 @@ hashdecl Qore::Krb5::GssClientContextOptions {
     *string channel_binding_application_data_hex;
 }
 
+//! Result of a single GSSAPI initiator context step
+/**
+*/
+hashdecl Qore::Krb5::GssStepInfo {
+    //! \c True if negotiation is complete after this step
+    bool complete;
+
+    //! Negotiated GSS flags as an integer bitmask
+    int flags;
+
+    //! Reported security-context lifetime in seconds
+    int lifetime;
+
+    //! Hex-encoded output token to send to the acceptor, or \c NOTHING if none was produced
+    *string token;
+}
+
+//! Result of a GSSAPI @ref Qore::Krb5::GssClientContext::wrap() operation
+/**
+*/
+hashdecl Qore::Krb5::GssWrapInfo {
+    //! Hex-encoded wrapped token
+    string token;
+
+    //! True if confidentiality was applied in addition to integrity
+    bool confidential;
+}
+
+//! Result of a GSSAPI @ref Qore::Krb5::GssClientContext::unwrap() operation
+/**
+*/
+hashdecl Qore::Krb5::GssUnwrapInfo {
+    //! Hex-encoded unwrapped message bytes
+    string message;
+
+    //! True if confidentiality was applied to the received token
+    bool confidential;
+
+    //! Reported GSSAPI quality-of-protection value
+    int qop;
+}
+
 //! Creates an initiator-side GSSAPI context for the given service principal
 /** @param service_principal a host-based service principal such as
     \c "HTTP/qorus.example.com@EXAMPLE.COM"
+
+    @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty
+    @throw KRB5-GSS-ERROR if the GSSAPI target name cannot be imported
 */
 GssClientContext::constructor(string service_principal) {
     SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), nullptr, xsink));
@@ -77,7 +121,13 @@ GssClientContext::constructor(string service_principal) {
 }
 
 //! Creates an initiator-side GSSAPI context with explicit options
-/**
+/** @param service_principal a host-based service principal
+    @param opts initiator options (flags, lifetime, mechanism, channel bindings)
+
+    @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty or an
+    option value is invalid or inconsistent
+    @throw KRB5-TOKEN-ERROR if any channel-binding hex value is malformed
+    @throw KRB5-GSS-ERROR if the GSSAPI target name cannot be imported
 */
 GssClientContext::constructor(string service_principal, hash<GssClientContextOptions> opts) {
     SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), opts, xsink));
@@ -90,6 +140,9 @@ GssClientContext::constructor(string service_principal, hash<GssClientContextOpt
 //! Creates an initiator-side GSSAPI context bound to explicit credentials
 /** @param service_principal a host-based service principal
     @param cred explicit GSSAPI credential
+
+    @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty
+    @throw KRB5-GSS-ERROR if the GSSAPI target name cannot be imported
 */
 GssClientContext::constructor(string service_principal, GssCredential[QoreGssCredential] cred) {
     SimpleRefHolder<QoreGssClientContext> c(new QoreGssClientContext(service_principal->c_str(), *cred,
@@ -101,7 +154,14 @@ GssClientContext::constructor(string service_principal, GssCredential[QoreGssCre
 }
 
 //! Creates an initiator-side GSSAPI context bound to explicit credentials and options
-/**
+/** @param service_principal a host-based service principal
+    @param cred explicit GSSAPI credential
+    @param opts initiator options (flags, lifetime, mechanism, channel bindings)
+
+    @throw KRB5-GSS-ARG-ERROR if \a service_principal is empty or an
+    option value is invalid or inconsistent
+    @throw KRB5-TOKEN-ERROR if any channel-binding hex value is malformed
+    @throw KRB5-GSS-ERROR if the GSSAPI target name cannot be imported
 */
 GssClientContext::constructor(string service_principal, GssCredential[QoreGssCredential] cred,
         hash<GssClientContextOptions> opts) {
@@ -135,20 +195,28 @@ nothing GssClientContext::reset() {
 }
 
 //! Advances the initiator security context
-/** @return a hash with the following keys:
-    - \c complete: boolean completion flag
-    - \c flags: negotiated GSS flags as an integer bitmask
-    - \c lifetime: reported lifetime in seconds
-    - \c token: hex-encoded output token if one was produced
+/** This method should be called in a loop until @ref Qore::Krb5::GssStepInfo::complete is
+    \c True, exchanging hex-encoded tokens with the acceptor each round.
+    Cooperative cancellation is checked before each GSSAPI call, so long-running
+    KDC exchanges can be interrupted cleanly.
+
+    @return a @ref Qore::Krb5::GssStepInfo describing the step result
+
+    @throw KRB5-GSS-ERROR if the GSSAPI negotiation fails
 */
-hash<auto> GssClientContext::step() {
+hash<GssStepInfo> GssClientContext::step() {
     return ctx->step(nullptr, xsink);
 }
 
 //! Advances the initiator security context with a hex-encoded input token
-/**
+/** @param token_hex hex-encoded acceptor token to process
+
+    @return a @ref Qore::Krb5::GssStepInfo describing the step result
+
+    @throw KRB5-TOKEN-ERROR if \a token_hex is not valid hexadecimal
+    @throw KRB5-GSS-ERROR if the GSSAPI negotiation fails
 */
-hash<auto> GssClientContext::step(string token_hex) {
+hash<GssStepInfo> GssClientContext::step(string token_hex) {
     return ctx->step(token_hex->c_str(), xsink);
 }
 
@@ -159,15 +227,15 @@ hash<auto> GssClientContext::step(string token_hex) {
     @param confidential request confidentiality in addition to integrity; defaults to True
     @param qop requested GSSAPI quality-of-protection value; defaults to 0
 
-    @return a hash with the following keys:
-    - \c token: hex-encoded wrapped token
-    - \c confidential: True if confidentiality was applied
+    @return a @ref Qore::Krb5::GssWrapInfo describing the wrapped token
 
+    @throw KRB5-TOKEN-ERROR if \a message_hex is not valid hexadecimal
+    @throw KRB5-GSS-ARG-ERROR if \a qop is negative
     @throw KRB5-GSS-STATE-ERROR if the context is not complete
     @throw KRB5-GSS-ERROR if GSSAPI wrapping fails
 */
-hash<auto> GssClientContext::wrap(string message_hex, *bool confidential = True, *int qop = 0) {
-    return ctx->wrap(message_hex->c_str(), confidential ? (bool)confidential : true, qop ? (int)qop : 0, xsink);
+hash<GssWrapInfo> GssClientContext::wrap(string message_hex, bool confidential = True, int qop = 0) {
+    return ctx->wrap(message_hex->c_str(), confidential, (int)qop, xsink);
 }
 
 //! Unwraps a hex-encoded GSSAPI protected token
@@ -175,15 +243,13 @@ hash<auto> GssClientContext::wrap(string message_hex, *bool confidential = True,
 
     @param token_hex wrapped token bytes encoded as hexadecimal
 
-    @return a hash with the following keys:
-    - \c message: hex-encoded unwrapped message
-    - \c confidential: True if confidentiality was applied to the token
-    - \c qop: reported GSSAPI quality-of-protection value
+    @return a @ref Qore::Krb5::GssUnwrapInfo describing the unwrapped message
 
+    @throw KRB5-TOKEN-ERROR if \a token_hex is not valid hexadecimal or is empty
     @throw KRB5-GSS-STATE-ERROR if the context is not complete
     @throw KRB5-GSS-ERROR if GSSAPI unwrapping fails
 */
-hash<auto> GssClientContext::unwrap(string token_hex) {
+hash<GssUnwrapInfo> GssClientContext::unwrap(string token_hex) {
     return ctx->unwrap(token_hex->c_str(), xsink);
 }
 
@@ -194,9 +260,10 @@ hash<auto> GssClientContext::unwrap(string token_hex) {
     @param confidential request confidentiality in addition to integrity; defaults to True
     @param qop requested GSSAPI quality-of-protection value; defaults to 0
 
-    @throw KRB5-GSS-STATE-ERROR if the context is not complete
     @throw KRB5-GSS-ARG-ERROR if \c output_size or \c qop is invalid
+    @throw KRB5-GSS-STATE-ERROR if the context is not complete
+    @throw KRB5-GSS-ERROR if the GSSAPI library cannot compute the size limit
 */
-int GssClientContext::getWrapSizeLimit(int output_size, *bool confidential = True, *int qop = 0) {
-    return ctx->getWrapSizeLimit(output_size, confidential ? (bool)confidential : true, qop ? (int)qop : 0, xsink);
+int GssClientContext::getWrapSizeLimit(int output_size, bool confidential = True, int qop = 0) {
+    return ctx->getWrapSizeLimit(output_size, confidential, (int)qop, xsink);
 }

@@ -8,11 +8,10 @@ if (argc < 2) {
 }
 
 for (int i = 1; i < argc; i++) {
-    Krb5Principal p(argv[i]);
+    Qore::Krb5::Krb5Principal p(argv[i]);
     printf("principal: %s\n", p.toString());
     printf("realm: %s\n", p.getRealm());
     for (int c = 0, n = p.getComponentCount(); c < n; c++) {
         printf("component[%d]: %s\n", c, p.getComponent(c));
     }
 }
-

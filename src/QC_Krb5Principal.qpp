@@ -28,7 +28,7 @@
 #include "krb5-module.h"
 
 //! Kerberos principal parser and inspector
-/** @since krb5 0.1
+/**
 */
 qclass Krb5Principal [arg=QoreKrb5Principal* principal; ns=Qore::Krb5; flags=final];
 
@@ -65,7 +65,8 @@ static Krb5Principal Krb5Principal::parseEnterprise(string principal_string) {
 }
 
 //! Creates an exact copy of the object
-/**
+/** @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-PRINCIPAL-ERROR if the principal cannot be copied
 */
 Krb5Principal::copy() {
     SimpleRefHolder<QoreKrb5Principal> p(new QoreKrb5Principal(*principal, xsink));
@@ -76,14 +77,14 @@ Krb5Principal::copy() {
 }
 
 //! Returns the canonical principal string
-/**
+/** @throw KRB5-PRINCIPAL-ERROR if the principal cannot be unparsed
 */
 string Krb5Principal::toString() [flags=CONSTANT] {
     return principal->toString(xsink);
 }
 
 //! Returns the realm portion of the principal
-/**
+/** @throw KRB5-REALM-ERROR if the principal does not carry a realm
 */
 string Krb5Principal::getRealm() [flags=CONSTANT] {
     return principal->getRealm(xsink);
@@ -97,7 +98,9 @@ int Krb5Principal::getComponentCount() [flags=CONSTANT] {
 }
 
 //! Returns the principal component at the given index
-/**
+/** @param idx zero-based component index
+
+    @throw KRB5-PRINCIPAL-ERROR if \a idx is out of range
 */
 string Krb5Principal::getComponent(int idx) [flags=CONSTANT] {
     return principal->getComponent(idx, xsink);
@@ -111,7 +114,8 @@ bool Krb5Principal::equals(Krb5Principal[QoreKrb5Principal] other) [flags=CONSTA
 }
 
 //! Returns the default realm from the local Kerberos configuration
-/**
+/** @throw KRB5-INIT-ERROR if a new Kerberos context cannot be initialized
+    @throw KRB5-REALM-ERROR if no default realm is configured on this host
 */
 static string Krb5Principal::getDefaultRealm() [flags=CONSTANT] {
     krb5_context ctx = nullptr;

@@ -4,9 +4,19 @@
 %requires krb5
 %requires Krb5Util
 
-class Krb5ModuleTest inherits QUnit::Test {
-    constructor() {
+%exec-class Krb5ModuleTest
+
+public class Krb5ModuleTest inherits QUnit::Test {
+    constructor() : Test("Krb5ModuleTest", "1.0") {
         addTestCase("utility module helpers", \testUtilityModuleHelpers());
+        addTestCase("utility parse host-based service principal",
+            \testUtilityParseHostBasedServicePrincipal());
+        addTestCase("utility parse rejects single-component principal",
+            \testUtilityParseHostBasedServicePrincipalRejectsSingleComponent());
+        addTestCase("utility parse rejects malformed principal",
+            \testUtilityParseHostBasedServicePrincipalRejectsMalformed());
+        addTestCase("utility tls-server-end-point channel binding builder",
+            \testUtilityBuildTlsServerEndPointChannelBindingHex());
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
         addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
@@ -52,6 +62,26 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("gss wrap size incomplete context", \testGssWrapSizeIncompleteContext());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
+        addTestCase("credential acquisition requires NETWORK domain",
+            \testAcquireCredentialsRequiresNetworkDomain());
+        addTestCase("keytab credential acquisition requires NETWORK domain",
+            \testAcquireCredentialsWithKeytabRequiresNetworkDomain());
+        addTestCase("gss client context requires NETWORK domain",
+            \testGssClientContextRequiresNetworkDomain());
+        addTestCase("gss credential import requires FILESYSTEM domain",
+            \testGssCredentialRequiresFilesystemDomain());
+        addTestCase("krb5 credentials class carries no default domain",
+            \testKrb5CredentialsHasNoDomain());
+        addTestCase("principal copy uses source context",
+            \testPrincipalCopyAcrossContexts());
+        addTestCase("memory cache store/list after explicit acquisition",
+            \testStoreAndListAcrossContexts());
+        addTestCase("enctype name fallback for unknown enctype",
+            \testEnctypeNameFallback());
+        addTestCase("credential cache store rejected under filesystem sandbox",
+            \testCacheStoreSandboxDeny());
+
+        set_return_value(main());
     }
 
     private string getSandboxCachePath(string suffix) {
@@ -89,9 +119,54 @@ class Krb5ModuleTest inherits QUnit::Test {
             Krb5Util::getHostBasedServicePrincipal("ldap", "ad.example.com", "EXAMPLE.COM"));
     }
 
+    private testUtilityParseHostBasedServicePrincipal() {
+        hash<Krb5Util::Krb5HostBasedServicePrincipalInfo> info =
+            Krb5Util::parseHostBasedServicePrincipal("HTTP/qorus.example.com@EXAMPLE.COM");
+        assertEq("HTTP", info.service);
+        assertEq("qorus.example.com", info.host);
+        assertEq("EXAMPLE.COM", info.realm);
+    }
+
+    private testUtilityParseHostBasedServicePrincipalRejectsSingleComponent() {
+        # Not a host-based service principal — only one component before the realm.
+        assertThrows("KRB5-PRINCIPAL-ERROR", "host-based", sub() {
+            Krb5Util::parseHostBasedServicePrincipal("alice@EXAMPLE.COM");
+        });
+    }
+
+    private testUtilityParseHostBasedServicePrincipalRejectsMalformed() {
+        assertThrows("KRB5-PRINCIPAL-ERROR", sub() {
+            Krb5Util::parseHostBasedServicePrincipal("not-a-principal");
+        });
+    }
+
+    private testUtilityBuildTlsServerEndPointChannelBindingHex() {
+        # The hex-encoded ASCII prefix "tls-server-end-point:" is 21 bytes / 42 hex chars.
+        string prefix_hex = "746c732d7365727665722d656e642d706f696e743a";
+        string cert_hash_hex = "00112233445566778899aabbccddeeff";
+        string cb = Krb5Util::buildTlsServerEndPointChannelBindingHex(cert_hash_hex);
+        assertEq(prefix_hex + cert_hash_hex, cb);
+
+        # The produced value must be acceptable as a GssClientContextOptions
+        # channel_binding_application_data_hex value (accepted without error).
+        hash<Qore::Krb5::GssClientContextOptions> opts();
+        opts.channel_binding_application_data_hex = cb;
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+    }
+
     private testContextDefaults() {
         Qore::Krb5::Krb5Context ctx();
-        assertFalse(ctx.getDefaultRealm() == "");
+        string realm;
+        try {
+            realm = ctx.getDefaultRealm();
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "KRB5-REALM-ERROR") {
+                testSkip("no default Kerberos realm configured on this host");
+            }
+            rethrow;
+        }
+        assertFalse(realm == "");
         assertFalse(ctx.getDefaultCredentialCacheName() == "");
     }
 
@@ -728,5 +803,145 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-GSS-ARG-ERROR", sub() {
             Qore::Krb5::GssClientContext bad("");
         });
+    }
+
+    private testAcquireCredentialsRequiresNetworkDomain() {
+        Program p(PO_MODERN | PO_NO_NETWORK);
+        p.loadModule("krb5");
+        assertThrows("PARSE-EXCEPTION", "acquireCredentialsWithPassword", sub() {
+            p.parse("
+                nothing sub test_network_blocked() {
+                    Qore::Krb5::Krb5Context ctx();
+                    Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                    ctx.acquireCredentialsWithPassword(principal, \"secret\");
+                }
+            ", "no_network_acquire_password");
+        });
+    }
+
+    private testAcquireCredentialsWithKeytabRequiresNetworkDomain() {
+        Program p(PO_MODERN | PO_NO_NETWORK);
+        p.loadModule("krb5");
+        assertThrows("PARSE-EXCEPTION", "acquireCredentialsWithKeytab", sub() {
+            p.parse("
+                nothing sub test_network_blocked_kt() {
+                    Qore::Krb5::Krb5Context ctx();
+                    Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                    auto kt = ctx.openKeytab(\"MEMORY:nd-kt\");
+                    ctx.acquireCredentialsWithKeytab(principal, kt);
+                }
+            ", "no_network_acquire_keytab");
+        });
+    }
+
+    private testGssClientContextRequiresNetworkDomain() {
+        Program p(PO_MODERN | PO_NO_NETWORK);
+        p.loadModule("krb5");
+        assertThrows("ILLEGAL-CLASS-INSTANTIATION", sub() {
+            p.parse("
+                nothing sub test_gss_network_blocked() {
+                    Qore::Krb5::GssClientContext ctx(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                    ctx.step();
+                }
+            ", "no_network_gss_step");
+        });
+    }
+
+    private testGssCredentialRequiresFilesystemDomain() {
+        # When filesystem access is denied, the GssCredential class itself is
+        # inaccessible because it carries dom=FILESYSTEM.
+        Program p(PO_MODERN | PO_NO_FILESYSTEM);
+        p.loadModule("krb5");
+        assertThrows("INVALID-METHOD", sub() {
+            p.parse("
+                nothing sub test_gss_cred_blocked() {
+                    Qore::Krb5::GssCredential::fromCredentialCache(NOTHING);
+                }
+            ", "no_fs_gss_cred");
+        });
+    }
+
+    private testKrb5CredentialsHasNoDomain() {
+        # Krb5Credentials must construct from hex without requiring any domain.
+        Program p(PO_MODERN | PO_NO_NETWORK | PO_NO_FILESYSTEM);
+        p.loadModule("krb5");
+        p.parse("
+            string sub build_creds() {
+                Qore::Krb5::Krb5Principal client(\"alice@EXAMPLE.COM\");
+                Qore::Krb5::Krb5Principal server(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                Qore::Krb5::Krb5Credentials creds(client, server,
+                    \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",
+                    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000);
+                return creds.getInfo().client;
+            }
+        ", "sandboxed_creds_build");
+        assertEq("alice@EXAMPLE.COM", p.callFunction("build_creds"));
+    }
+
+    private testPrincipalCopyAcrossContexts() {
+        Qore::Krb5::Krb5Principal a("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal b = a.copy();
+        assertEq("alice@EXAMPLE.COM", b.toString());
+        assertEq("EXAMPLE.COM", b.getRealm());
+        assertTrue(a.equals(b));
+        # copy must be independent: source destruction must not touch dest.
+        delete a;
+        assertEq("alice@EXAMPLE.COM", b.toString());
+    }
+
+    private testStoreAndListAcrossContexts() {
+        # store a Krb5Credentials built via a different krb5_context than the cache;
+        # verifies that QoreKrb5CredentialCache::storeCredentials copies across contexts.
+        Qore::Krb5::Krb5Context cache_ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cc = cache_ctx.createMemoryCredentialCache(client, "module-krb5-cross-context");
+
+        Qore::Krb5::Krb5Credentials creds = createTestCredentials();
+        cc.storeCredentials(creds);
+
+        list<hash<Qore::Krb5::Krb5CredentialsInfo>> entries = cc.listCredentials();
+        assertEq(1, entries.size());
+        assertEq("alice@EXAMPLE.COM", entries[0].client);
+    }
+
+    private testEnctypeNameFallback() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("HTTP/qorus.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Credentials creds(client, server, getTestKeyHex1(),
+            0x7fff, 1000, 2000);
+        hash<Qore::Krb5::Krb5CredentialsInfo> info = creds.getInfo();
+        assertEq(0x7fff, info.enctype);
+        # Exact fallback format may vary across MIT krb5 versions but must be non-empty.
+        assertFalse(info.enctype_name == "");
+    }
+
+    private testCacheStoreSandboxDeny() {
+        string cachePath = getSandboxCachePath("store-deny");
+        cleanupSandboxCache(cachePath);
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse(sprintf("
+            nothing sub test_denied_cache_store() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal client(\"alice@EXAMPLE.COM\");
+                Qore::Krb5::Krb5Principal server(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                Qore::Krb5::Krb5Credentials creds(client, server,
+                    \"00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\",
+                    Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 3000, 0x40, \"abcd\");
+                auto cc = ctx.openCredentialCache(\"FILE:%s\");
+                cc.initialize(client);
+                cc.storeCredentials(creds);
+            }
+        ", cachePath), "sandbox_denied_cache_store");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        assertThrows("FILESYSTEM-ACCESS-DENIED", sub() {
+            p.callFunction("test_denied_cache_store");
+        });
+        cleanupSandboxCache(cachePath);
     }
 }
