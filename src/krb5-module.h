@@ -33,6 +33,7 @@
 #include <qore/qore_thread.h>
 
 #include <gssapi/gssapi.h>
+#include <gssapi/gssapi_ext.h>
 #include <gssapi/gssapi_krb5.h>
 #include <krb5.h>
 
@@ -115,6 +116,11 @@ public:
     gss_OID mech = GSS_C_NO_OID;
     OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
     OM_uint32 lifetime_req = 0;
+    gss_channel_bindings_struct channel_bindings;
+    std::vector<unsigned char> channel_binding_initiator_address;
+    std::vector<unsigned char> channel_binding_acceptor_address;
+    std::vector<unsigned char> channel_binding_application_data;
+    bool has_channel_bindings = false;
     bool complete = false;
     std::string target_display;
 

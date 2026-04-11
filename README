@@ -16,6 +16,7 @@ This initial implementation provides:
 - explicit GSSAPI credentials imported from Kerberos credential caches or client keytabs
 - GSSAPI initiator target-name handling
 - GSSAPI context stepping with hex-encoded tokens and configurable initiator flags
+- GSSAPI channel bindings for hardened SASL/GSSAPI deployments
 - GSSAPI message wrap/unwrap helpers for negotiated integrity and confidentiality layers
 
 Initial credential acquisition supports AD-oriented security options such as
@@ -27,6 +28,8 @@ process-global default-cache assumptions in multi-tenant Qorus services.
 Completed GSSAPI contexts can wrap and unwrap messages, enabling SASL/GSSAPI
 security layer implementations to request integrity or confidentiality when an
 enterprise policy requires it.
+Channel-binding application data can be supplied explicitly, for example for
+LDAP over TLS deployments that enforce endpoint binding.
 
 The module is designed as the security foundation for enterprise LDAP and
 Active Directory integrations on Linux.

@@ -47,6 +47,21 @@ hashdecl Qore::Krb5::GssClientContextOptions {
 
     //! Mechanism selector; supported values are \c "kerberos" and \c "default"
     *string mechanism;
+
+    //! Optional channel-binding initiator address type; defaults to \c GSS_AF_NULLADDR
+    *int channel_binding_initiator_addrtype;
+
+    //! Optional channel-binding initiator address encoded as hexadecimal
+    *string channel_binding_initiator_address_hex;
+
+    //! Optional channel-binding acceptor address type; defaults to \c GSS_AF_NULLADDR
+    *int channel_binding_acceptor_addrtype;
+
+    //! Optional channel-binding acceptor address encoded as hexadecimal
+    *string channel_binding_acceptor_address_hex;
+
+    //! Optional channel-binding application data encoded as hexadecimal
+    *string channel_binding_application_data_hex;
 }
 
 //! Creates an initiator-side GSSAPI context for the given service principal

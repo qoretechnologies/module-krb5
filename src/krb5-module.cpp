@@ -361,6 +361,12 @@ public:
     OM_uint32 req_flags = GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG;
     OM_uint32 lifetime_req = 0;
     gss_OID mech = gss_mech_krb5;
+    OM_uint32 initiator_addrtype = GSS_C_AF_NULLADDR;
+    OM_uint32 acceptor_addrtype = GSS_C_AF_NULLADDR;
+    std::vector<unsigned char> initiator_address;
+    std::vector<unsigned char> acceptor_address;
+    std::vector<unsigned char> application_data;
+    bool has_channel_bindings = false;
 
     DLLLOCAL QoreGssClientContextOptions(const QoreHashNode* opts, ExceptionSink* xsink) {
         if (!opts) {
@@ -409,6 +415,76 @@ public:
                 return;
             }
         }
+
+        parseAddrType(opts, "channel_binding_initiator_addrtype", initiator_addrtype, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseAddrType(opts, "channel_binding_acceptor_addrtype", acceptor_addrtype, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseHexOption(opts, "channel_binding_initiator_address_hex", initiator_address, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseHexOption(opts, "channel_binding_acceptor_address_hex", acceptor_address, xsink);
+        if (*xsink) {
+            return;
+        }
+        parseHexOption(opts, "channel_binding_application_data_hex", application_data, xsink);
+        if (*xsink) {
+            return;
+        }
+        has_channel_bindings = !initiator_address.empty() || !acceptor_address.empty() || !application_data.empty();
+        if (!has_channel_bindings) {
+            if (initiator_addrtype != GSS_C_AF_NULLADDR || acceptor_addrtype != GSS_C_AF_NULLADDR) {
+                xsink->raiseException("KRB5-GSS-ARG-ERROR", "channel-binding address types require address data");
+            }
+            return;
+        }
+        if ((initiator_addrtype == GSS_C_AF_NULLADDR) != initiator_address.empty()) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR",
+                "channel-binding initiator address requires a non-null address type and address data");
+            return;
+        }
+        if ((acceptor_addrtype == GSS_C_AF_NULLADDR) != acceptor_address.empty()) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR",
+                "channel-binding acceptor address requires a non-null address type and address data");
+        }
+    }
+
+private:
+    DLLLOCAL static void parseAddrType(const QoreHashNode* opts, const char* key, OM_uint32& value,
+            ExceptionSink* xsink) {
+        QoreValue v = opts->getKeyValue(key);
+        if (v.isNullOrNothing()) {
+            return;
+        }
+        int64 i = v.getAsBigInt();
+        if (i < 0 || i > UINT32_MAX) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' must be between 0 and %u", key, UINT32_MAX);
+            return;
+        }
+        value = (OM_uint32)i;
+    }
+
+    DLLLOCAL static void parseHexOption(const QoreHashNode* opts, const char* key, std::vector<unsigned char>& value,
+            ExceptionSink* xsink) {
+        QoreValue v = opts->getKeyValue(key);
+        if (v.isNullOrNothing()) {
+            return;
+        }
+
+        QoreStringValueHelper str(v, QCS_UTF8, xsink);
+        if (*xsink) {
+            return;
+        }
+        if (!str->c_str() || !*str->c_str()) {
+            xsink->raiseException("KRB5-GSS-ARG-ERROR", "option '%s' cannot be empty", key);
+            return;
+        }
+        decode_hex(str->c_str(), value, xsink, "KRB5-GSS-ARG-ERROR", key);
     }
 };
 
@@ -430,6 +506,24 @@ QoreGssClientContext::QoreGssClientContext(const char* service_principal, QoreGs
     req_flags = parsed_opts.req_flags;
     lifetime_req = parsed_opts.lifetime_req;
     mech = parsed_opts.mech;
+    memset(&channel_bindings, 0, sizeof(channel_bindings));
+    if (parsed_opts.has_channel_bindings) {
+        has_channel_bindings = true;
+        channel_binding_initiator_address = parsed_opts.initiator_address;
+        channel_binding_acceptor_address = parsed_opts.acceptor_address;
+        channel_binding_application_data = parsed_opts.application_data;
+        channel_bindings.initiator_addrtype = parsed_opts.initiator_addrtype;
+        channel_bindings.acceptor_addrtype = parsed_opts.acceptor_addrtype;
+        channel_bindings.initiator_address.length = channel_binding_initiator_address.size();
+        channel_bindings.initiator_address.value = channel_binding_initiator_address.empty()
+            ? nullptr : channel_binding_initiator_address.data();
+        channel_bindings.acceptor_address.length = channel_binding_acceptor_address.size();
+        channel_bindings.acceptor_address.value = channel_binding_acceptor_address.empty()
+            ? nullptr : channel_binding_acceptor_address.data();
+        channel_bindings.application_data.length = channel_binding_application_data.size();
+        channel_bindings.application_data.value = channel_binding_application_data.empty()
+            ? nullptr : channel_binding_application_data.data();
+    }
 
     OM_uint32 min_stat = 0;
     gss_buffer_desc namebuf;
@@ -498,7 +592,7 @@ QoreHashNode* QoreGssClientContext::step(const char* token_hex, ExceptionSink* x
     gss_buffer_desc output_token = GSS_C_EMPTY_BUFFER;
     OM_uint32 min_stat = 0;
     OM_uint32 maj = gss_init_sec_context(&min_stat, cred_ref ? cred_ref->cred : GSS_C_NO_CREDENTIAL, &ctx,
-        target_name, mech, req_flags, lifetime_req, GSS_C_NO_CHANNEL_BINDINGS,
+        target_name, mech, req_flags, lifetime_req, has_channel_bindings ? &channel_bindings : GSS_C_NO_CHANNEL_BINDINGS,
         input_token.length ? &input_token : GSS_C_NO_BUFFER, nullptr, &output_token, &actual_flags, &lifetime);
 
     if (maj != GSS_S_COMPLETE && maj != GSS_S_CONTINUE_NEEDED) {
@@ -1595,11 +1689,15 @@ static void krb5_module_init(QoreModuleInitContext& ctx, ExceptionSink& xsink) {
     krb5ns.addConstant("GSS_DELEG_FLAG", (int64)GSS_C_DELEG_FLAG);
     krb5ns.addConstant("GSS_REPLAY_FLAG", (int64)GSS_C_REPLAY_FLAG);
     krb5ns.addConstant("GSS_ANON_FLAG", (int64)GSS_C_ANON_FLAG);
+    krb5ns.addConstant("GSS_CHANNEL_BOUND_FLAG", (int64)GSS_C_CHANNEL_BOUND_FLAG);
     krb5ns.addConstant("GSS_DEFAULT_FLAGS",
         (int64)(GSS_C_MUTUAL_FLAG | GSS_C_SEQUENCE_FLAG | GSS_C_INTEG_FLAG));
     krb5ns.addConstant("GSS_CRED_USAGE_INITIATE", (int64)GSS_C_INITIATE);
     krb5ns.addConstant("GSS_CRED_USAGE_ACCEPT", (int64)GSS_C_ACCEPT);
     krb5ns.addConstant("GSS_CRED_USAGE_BOTH", (int64)GSS_C_BOTH);
+    krb5ns.addConstant("GSS_AF_UNSPEC", (int64)GSS_C_AF_UNSPEC);
+    krb5ns.addConstant("GSS_AF_INET", (int64)GSS_C_AF_INET);
+    krb5ns.addConstant("GSS_AF_NULLADDR", (int64)GSS_C_AF_NULLADDR);
     krb5ns.addConstant("ENCTYPE_AES128_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES128_CTS_HMAC_SHA1_96);
     krb5ns.addConstant("ENCTYPE_AES256_CTS_HMAC_SHA1_96", (int64)ENCTYPE_AES256_CTS_HMAC_SHA1_96);
 #ifdef ENCTYPE_AES128_CTS_HMAC_SHA256_128

@@ -43,6 +43,9 @@ Qore::Krb5::GssCredential cred = Qore::Krb5::GssCredential::fromKeytab(kt, servi
 hash<Qore::Krb5::GssClientContextOptions> opts();
 opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG;
 opts.mechanism = "kerberos";
+// Example channel-binding application data; for LDAP/TLS this should be the
+// RFC 5929 tls-server-end-point binding data encoded as hexadecimal.
+opts.channel_binding_application_data_hex = "746c732d7365727665722d656e642d706f696e743a00112233";
 
 Qore::Krb5::GssClientContext gss("LDAP/ad.example.com@EXAMPLE.COM", cred, opts);
 hash<auto> token = gss.step();

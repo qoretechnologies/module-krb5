@@ -19,6 +19,7 @@
     - explicit GSSAPI credential import from Kerberos caches and client keytabs
     - GSSAPI target-name handling
     - initiator-side GSSAPI token stepping with configurable flags and mechanisms
+    - GSSAPI channel bindings for hardened SASL/GSSAPI deployments
     - GSSAPI message wrap/unwrap helpers for negotiated integrity and confidentiality layers
 
     @section krb5securitymodel Security Model
@@ -29,8 +30,9 @@
     supports noninteractive service use, KDC canonicalization, PAC requests,
     enctype restrictions, and FAST armor credential caches. GSSAPI initiator
     contexts can be bound to explicit credentials to avoid global default-cache
-    assumptions in service processes, and completed contexts can protect
-    messages when SASL/GSSAPI integrity or confidentiality layers are required.
+    assumptions in service processes, can include channel-binding application
+    data, and completed contexts can protect messages when SASL/GSSAPI integrity
+    or confidentiality layers are required.
 
     @section krb5classes Main Classes
 

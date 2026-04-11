@@ -11,5 +11,6 @@
 - added `GssCredential` for explicit GSSAPI credential import from Kerberos credential caches and keytabs
 - added `GssClientContext` for initiator-side GSSAPI target setup and token stepping
 - added typed `GssClientContextOptions` for initiator flags, lifetime, and mechanism selection
+- added GSSAPI channel-binding options for hardened SASL/GSSAPI deployments
 - added GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity and confidentiality layers
 - added initial documentation, examples, and tests

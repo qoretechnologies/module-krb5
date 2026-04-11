@@ -35,6 +35,7 @@ class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("initial credentials FAST cache sandbox deny", \testInitialCredentialsFastCacheSandboxDeny());
         addTestCase("gss target setup", \testGssTargetSetup());
         addTestCase("gss context options", \testGssContextOptions());
+        addTestCase("gss context channel binding options", \testGssContextChannelBindingOptions());
         addTestCase("gss context invalid options", \testGssContextInvalidOptions());
         addTestCase("gss credential from keytab", \testGssCredentialFromKeytab());
         addTestCase("gss credential empty cache rejected", \testGssCredentialEmptyCacheRejected());
@@ -522,6 +523,20 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx2.getTargetName());
     }
 
+    private testGssContextChannelBindingOptions() {
+        hash<Qore::Krb5::GssClientContextOptions> opts();
+        opts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CHANNEL_BOUND_FLAG;
+        opts.mechanism = "kerberos";
+        opts.channel_binding_initiator_addrtype = Qore::Krb5::GSS_AF_NULLADDR;
+        opts.channel_binding_acceptor_addrtype = Qore::Krb5::GSS_AF_INET;
+        opts.channel_binding_acceptor_address_hex = "7f000001";
+        opts.channel_binding_application_data_hex = "746c732d7365727665722d656e642d706f696e743a00112233";
+
+        Qore::Krb5::GssClientContext ctx("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        assertEq("HTTP/qorus.example.com@EXAMPLE.COM", ctx.getTargetName());
+        assertFalse(ctx.isComplete());
+    }
+
     private testGssContextInvalidOptions() {
         assertThrows("KRB5-GSS-ARG-ERROR", sub() {
             hash<Qore::Krb5::GssClientContextOptions> opts();
@@ -536,6 +551,26 @@ class Krb5ModuleTest inherits QUnit::Test {
         assertThrows("KRB5-GSS-ARG-ERROR", sub() {
             hash<Qore::Krb5::GssClientContextOptions> opts();
             opts.lifetime = -1;
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.channel_binding_application_data_hex = "abc";
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.channel_binding_application_data_hex = "";
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.channel_binding_acceptor_addrtype = Qore::Krb5::GSS_AF_INET;
+            Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
+        });
+        assertThrows("KRB5-GSS-ARG-ERROR", sub() {
+            hash<Qore::Krb5::GssClientContextOptions> opts();
+            opts.channel_binding_acceptor_address_hex = "7f000001";
             Qore::Krb5::GssClientContext bad("HTTP/qorus.example.com@EXAMPLE.COM", opts);
         });
     }
