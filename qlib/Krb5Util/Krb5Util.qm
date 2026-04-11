@@ -60,6 +60,8 @@ module Krb5Util {
       NegTokenResp data including \c negState and optional response tokens
     - @ref Krb5Util::getCredentialLifecycleInfo() evaluates credential
       validity, expiry, and renewal windows from credential metadata
+    - @ref Krb5Util::removeOldKeytabEntries() helps remove old service-key
+      material after key rotation
 
     Binary classes and constants remain in the \c Qore::Krb5 namespace;
     helper functions are exported from the \c Krb5Util namespace.
@@ -156,6 +158,173 @@ public namespace Krb5Util {
 
         #! True when the credential is valid, renewable, and within the renewal threshold
         bool should_renew;
+    }
+
+    #! Lists keytab entries matching a principal and optional kvno/enctype filters
+    /** @param keytab keytab to inspect
+        @param principal principal to match
+        @param kvno optional key version number to match
+        @param enctype optional enctype to match
+        @param logger optional logger for safe diagnostics; key material is
+        not logged
+
+        @return matching keytab entry metadata
+
+        @throw KRB5-KEYTAB-ROTATION-ERROR if filter values are invalid
+        @throw KRB5-KEYTAB-ERROR if the keytab cannot be enumerated
+    */
+    public list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> sub listKeytabEntries(
+            Qore::Krb5::Krb5Keytab keytab, Qore::Krb5::Krb5Principal principal,
+            *int kvno = NOTHING, *int enctype = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        validateKeytabRotationFilter(kvno, enctype);
+
+        string principalString = principal.toString();
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> rv = ();
+        foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (keytab.listEntries()) {
+            if (entry.principal != principalString) {
+                continue;
+            }
+            if (exists kvno && entry.kvno != kvno) {
+                continue;
+            }
+            if (exists enctype && entry.enctype != enctype) {
+                continue;
+            }
+            push rv, entry;
+        }
+
+        logKeytabRotation(logger, sprintf("listed keytab entries principal=%y kvno=%y enctype=%y count=%d",
+            principalString, exists kvno ? kvno : NOTHING, exists enctype ? enctype : NOTHING, rv.size()));
+        return rv;
+    }
+
+    #! Returns the highest key version number for a principal in a keytab
+    /** @param keytab keytab to inspect
+        @param principal principal to match
+        @param logger optional logger for safe diagnostics; key material is
+        not logged
+
+        @return highest key version number for \a principal
+
+        @throw KRB5-KEYTAB-ROTATION-ERROR if no matching keytab entry exists
+        @throw KRB5-KEYTAB-ERROR if the keytab cannot be enumerated
+    */
+    public int sub getKeytabHighestKvno(Qore::Krb5::Krb5Keytab keytab,
+            Qore::Krb5::Krb5Principal principal, *Qore::Logger::LoggerInterface logger = NOTHING) {
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> entries = listKeytabEntries(keytab, principal);
+        if (!entries.size()) {
+            throw "KRB5-KEYTAB-ROTATION-ERROR",
+                sprintf("keytab does not contain principal %y", principal.toString());
+        }
+
+        int highest = entries[0].kvno;
+        foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (entries) {
+            if (entry.kvno > highest) {
+                highest = entry.kvno;
+            }
+        }
+
+        logKeytabRotation(logger, sprintf("highest keytab kvno principal=%y kvno=%d", principal.toString(), highest));
+        return highest;
+    }
+
+    #! Returns True if a keytab contains an entry matching the given filters
+    /** @param keytab keytab to inspect
+        @param principal principal to match
+        @param kvno optional key version number to match
+        @param enctype optional enctype to match
+        @param logger optional logger for safe diagnostics; key material is
+        not logged
+
+        @return True if a matching entry exists
+
+        @throw KRB5-KEYTAB-ROTATION-ERROR if filter values are invalid
+        @throw KRB5-KEYTAB-ERROR if the keytab cannot be enumerated
+    */
+    public bool sub keytabHasEntry(Qore::Krb5::Krb5Keytab keytab, Qore::Krb5::Krb5Principal principal,
+            *int kvno = NOTHING, *int enctype = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        bool rv = listKeytabEntries(keytab, principal, kvno, enctype).size() > 0;
+        logKeytabRotation(logger, sprintf("checked keytab entry principal=%y kvno=%y enctype=%y found=%y",
+            principal.toString(), exists kvno ? kvno : NOTHING, exists enctype ? enctype : NOTHING, rv));
+        return rv;
+    }
+
+    #! Removes all keytab entries matching a principal and optional kvno/enctype filters
+    /** Matching entries are listed before any removal is attempted, so callers
+        can remove all entries for a principal, a specific kvno, or a specific
+        enctype without relying on repeated highest-kvno lookups.
+
+        @param keytab keytab to modify
+        @param principal principal to match
+        @param kvno optional key version number to match
+        @param enctype optional enctype to match
+        @param logger optional logger for safe diagnostics; key material is
+        not logged
+
+        @return number of entries removed
+
+        @throw KRB5-KEYTAB-ROTATION-ERROR if filter values are invalid
+        @throw KRB5-KEYTAB-ERROR if the keytab cannot be enumerated or a
+        matching entry cannot be removed
+    */
+    public int sub removeKeytabEntries(Qore::Krb5::Krb5Keytab keytab, Qore::Krb5::Krb5Principal principal,
+            *int kvno = NOTHING, *int enctype = NOTHING,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> entries = listKeytabEntries(keytab, principal, kvno, enctype);
+        foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (entries) {
+            keytab.removeEntry(principal, entry.kvno, entry.enctype);
+        }
+
+        logKeytabRotation(logger, sprintf("removed keytab entries principal=%y kvno=%y enctype=%y count=%d",
+            principal.toString(), exists kvno ? kvno : NOTHING, exists enctype ? enctype : NOTHING, entries.size()));
+        return entries.size();
+    }
+
+    #! Removes keytab entries for a principal older than the kept key version number
+    /** If \a keep_kvno is 0, the current highest kvno for \a principal is kept.
+        The kept kvno must exist before older entries are removed.
+
+        @param keytab keytab to modify
+        @param principal principal to match
+        @param keep_kvno key version number to keep, or 0 to keep the highest
+        available kvno
+        @param logger optional logger for safe diagnostics; key material is
+        not logged
+
+        @return number of old entries removed
+
+        @throw KRB5-KEYTAB-ROTATION-ERROR if \a keep_kvno is invalid, if the
+        principal has no entries, or if the requested kept kvno is not present
+        @throw KRB5-KEYTAB-ERROR if the keytab cannot be enumerated or a
+        matching old entry cannot be removed
+    */
+    public int sub removeOldKeytabEntries(Qore::Krb5::Krb5Keytab keytab,
+            Qore::Krb5::Krb5Principal principal, int keep_kvno = 0,
+            *Qore::Logger::LoggerInterface logger = NOTHING) {
+        if (keep_kvno < 0) {
+            throw "KRB5-KEYTAB-ROTATION-ERROR", "kept key version number cannot be negative";
+        }
+
+        int effectiveKeepKvno = keep_kvno ? keep_kvno : getKeytabHighestKvno(keytab, principal, logger);
+        if (!keytabHasEntry(keytab, principal, effectiveKeepKvno)) {
+            throw "KRB5-KEYTAB-ROTATION-ERROR",
+                sprintf("keytab does not contain principal %y with kvno %d", principal.toString(), effectiveKeepKvno);
+        }
+
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> entries = listKeytabEntries(keytab, principal);
+        int removed = 0;
+        foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (entries) {
+            if (entry.kvno < effectiveKeepKvno) {
+                keytab.removeEntry(principal, entry.kvno, entry.enctype);
+                ++removed;
+            }
+        }
+
+        logKeytabRotation(logger, sprintf("removed old keytab entries principal=%y keep_kvno=%d count=%d",
+            principal.toString(), effectiveKeepKvno, removed));
+        return removed;
     }
 
     #! Builds a host-based Kerberos 5 service principal string of the form \c "service/host@REALM"
@@ -800,6 +969,16 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
         }
     }
 
+    #! Validates keytab rotation filters
+    sub validateKeytabRotationFilter(*int kvno, *int enctype) {
+        if (exists kvno && kvno < 0) {
+            throw "KRB5-KEYTAB-ROTATION-ERROR", "key version number cannot be negative";
+        }
+        if (exists enctype && enctype < 0) {
+            throw "KRB5-KEYTAB-ROTATION-ERROR", "enctype cannot be negative";
+        }
+    }
+
     #! Returns a symbolic name for an RFC 4178 negState value
     *string sub getNegStateName(int neg_state) {
         switch (neg_state) {
@@ -825,6 +1004,13 @@ hash<Qore::Krb5::GssStepInfo> step = initiator.step(gssHex);
     sub logCredentialLifecycle(*Qore::Logger::LoggerInterface logger, string message) {
         if (logger) {
             logger.debug("Krb5Util credential lifecycle: %s", message);
+        }
+    }
+
+    #! Logs safe keytab rotation diagnostics without raw key material
+    sub logKeytabRotation(*Qore::Logger::LoggerInterface logger, string message) {
+        if (logger) {
+            logger.debug("Krb5Util keytab rotation: %s", message);
         }
     }
 }

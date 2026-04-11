@@ -37,6 +37,7 @@ The module provides:
 - GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity
   and confidentiality layers
 - Keytab entry removal for key rotation workflows
+- Keytab rotation helpers for highest-kvno discovery and old-entry cleanup
 - a `Krb5Util` helper module with Qore-language Kerberos and SPNEGO utilities
 
 Higher-level helper APIs should use `Logger::LoggerInterface` for diagnostics.
@@ -84,6 +85,13 @@ Credential metadata can be evaluated without exposing key or ticket material:
   if (lifecycle.should_renew) {
       # renew before expiry
   }
+
+Keytab rotation code can inspect and remove old service keys without logging
+key material:
+
+  int highest = Krb5Util::getKeytabHighestKvno(keytab, service_principal);
+  int removed = Krb5Util::removeOldKeytabEntries(keytab, service_principal,
+      highest);
 
 See the generated HTML documentation for the class reference, security model,
 use cases, and runnable examples.

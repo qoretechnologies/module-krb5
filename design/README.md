@@ -73,7 +73,8 @@ output buffers are released even on early-return error paths.
 - Initial credential acquisition from passwords and keytabs, credential
   renewal, and service-ticket acquisition from an existing TGT.
 - Credential lifecycle helpers for expiry and renewal-threshold evaluation.
-- Keytab management: adding, removing, and enumerating entries.
+- Keytab management: adding, removing, enumerating, highest-kvno discovery,
+  and old-entry cleanup.
 - SPNEGO helpers for HTTP Negotiate token envelopes.
 - Basic credential delegation through `GssAcceptorContext`.
 - No KDC replication, admin (kadmin) operations, or prompter callbacks.
@@ -97,9 +98,8 @@ and ticket lifetimes.
   and server token-loop helpers.
 - **Credential lifecycle workflows** — logger-aware renew-and-store workflows
   for long-running services.
-- **Keytab rotation helpers** — remove all entries for a principal or kvno,
-  inspect the highest kvno, and validate a keytab entry before removing older
-  material.
+- **Keytab rotation workflows** — dry-run reports, policy checks, and
+  logger-aware keytab cleanup orchestration for service deployments.
 - **Constrained delegation** — S4U2Self and S4U2Proxy for identity-forwarding
   services.
 - **Deployment diagnostics** — logger-aware validation reports for realm,

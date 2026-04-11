@@ -153,6 +153,12 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("keytab get entry specific enctype", \testKeytabGetEntrySpecificEnctype());
         addTestCase("keytab multiple entries same principal",
             \testKeytabMultipleEntriesSamePrincipal());
+        addTestCase("utility keytab rotation helpers",
+            \testUtilityKeytabRotationHelpers());
+        addTestCase("utility keytab rotation validation",
+            \testUtilityKeytabRotationValidation());
+        addTestCase("utility keytab rotation logger diagnostics safe",
+            \testUtilityKeytabRotationLoggerDiagnosticsSafe());
         addTestCase("credential cache multiple credentials",
             \testCredentialCacheMultipleCredentials());
         addTestCase("credential cache get principal on empty cache",
@@ -1519,6 +1525,87 @@ public class Krb5ModuleTest inherits QUnit::Test {
         kt.addEntry(p, keyHex128, Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96, 1);
         kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 2);
         assertEq(3, kt.listEntries().size());
+    }
+
+    private testUtilityKeytabRotationHelpers() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-keytab-rotation");
+        Qore::Krb5::Krb5Principal p("HTTP/rotate.example.com@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal other("HTTP/other.example.com@EXAMPLE.COM");
+
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 2);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96, 2);
+        kt.addEntry(other, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 9);
+
+        assertEq(2, Krb5Util::getKeytabHighestKvno(kt, p));
+        assertTrue(Krb5Util::keytabHasEntry(kt, p, 2, Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96));
+        assertFalse(Krb5Util::keytabHasEntry(kt, p, 3));
+
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> principalEntries = Krb5Util::listKeytabEntries(kt, p);
+        assertEq(3, principalEntries.size());
+
+        list<hash<Qore::Krb5::Krb5KeytabEntryInfo>> kvnoTwoEntries = Krb5Util::listKeytabEntries(kt, p, 2);
+        assertEq(2, kvnoTwoEntries.size());
+
+        assertEq(1, Krb5Util::removeOldKeytabEntries(kt, p, 2));
+        principalEntries = Krb5Util::listKeytabEntries(kt, p);
+        assertEq(2, principalEntries.size());
+        foreach hash<Qore::Krb5::Krb5KeytabEntryInfo> entry in (principalEntries) {
+            assertEq(2, entry.kvno);
+        }
+        assertTrue(Krb5Util::keytabHasEntry(kt, other, 9));
+
+        assertEq(2, Krb5Util::removeKeytabEntries(kt, p));
+        assertFalse(Krb5Util::keytabHasEntry(kt, p));
+        assertTrue(Krb5Util::keytabHasEntry(kt, other, 9));
+    }
+
+    private testUtilityKeytabRotationValidation() {
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-keytab-rotation-validation");
+        Qore::Krb5::Krb5Principal p("HTTP/rotate-validation.example.com@EXAMPLE.COM");
+
+        assertThrows("KRB5-KEYTAB-ROTATION-ERROR", sub() {
+            Krb5Util::getKeytabHighestKvno(kt, p);
+        });
+        assertThrows("KRB5-KEYTAB-ROTATION-ERROR", sub() {
+            Krb5Util::listKeytabEntries(kt, p, -1);
+        });
+        assertThrows("KRB5-KEYTAB-ROTATION-ERROR", sub() {
+            Krb5Util::listKeytabEntries(kt, p, NOTHING, -1);
+        });
+        assertThrows("KRB5-KEYTAB-ROTATION-ERROR", sub() {
+            Krb5Util::removeOldKeytabEntries(kt, p, -1);
+        });
+
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        assertThrows("KRB5-KEYTAB-ROTATION-ERROR", sub() {
+            Krb5Util::removeOldKeytabEntries(kt, p, 2);
+        });
+    }
+
+    private testUtilityKeytabRotationLoggerDiagnosticsSafe() {
+        Qore::Logger::Logger logger("krb5-keytab-rotation-test", "DEBUG");
+        CaptureLogAppender appender();
+        logger.addAppender(appender);
+        appender.open();
+
+        Qore::Krb5::Krb5Context ctx();
+        auto kt = ctx.openKeytab("MEMORY:module-krb5-keytab-rotation-logger");
+        Qore::Krb5::Krb5Principal p("HTTP/rotate-logger.example.com@EXAMPLE.COM");
+        kt.addEntry(p, getTestKeyHex1(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1);
+        kt.addEntry(p, getTestKeyHex2(), Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 2);
+
+        assertEq(1, Krb5Util::removeOldKeytabEntries(kt, p, 0, logger));
+
+        list<string> messages = appender.getMessages();
+        assertTrue(messages.size() >= 2);
+        string combined = foldl $1 + "\n" + $2, messages;
+        assertTrue(combined.find("Krb5Util keytab rotation") >= 0);
+        assertTrue(combined.find("keep_kvno=2") >= 0);
+        assertEq(-1, combined.find(getTestKeyHex1()));
+        assertEq(-1, combined.find(getTestKeyHex2()));
     }
 
     private testCredentialCacheMultipleCredentials() {
