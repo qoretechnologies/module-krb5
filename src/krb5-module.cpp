@@ -1464,6 +1464,55 @@ QoreGssCredential::QoreGssCredential(const QoreKrb5Keytab& keytab, const QoreKrb
     }
 }
 
+QoreGssCredential::QoreGssCredential(const QoreGssCredential& impersonator, const QoreKrb5Principal& user,
+        ExceptionSink* xsink) {
+#ifdef HAVE_GSS_ACQUIRE_CRED_IMPERSONATE_NAME
+    if (impersonator.cred == GSS_C_NO_CREDENTIAL) {
+        xsink->raiseException("KRB5-GSS-ARG-ERROR", "impersonator credential is not valid");
+        return;
+    }
+    if (qore_check_cancel(xsink, "acquiring S4U2Self impersonated credential")) {
+        return;
+    }
+
+    // Import the user principal as a gss_name_t
+    QoreStringNodeHolder princ_str(user.toString(xsink));
+    if (*xsink) {
+        return;
+    }
+
+    gss_buffer_desc name_buf = GSS_C_EMPTY_BUFFER;
+    name_buf.value = const_cast<void*>(static_cast<const void*>(princ_str->c_str()));
+    name_buf.length = princ_str->size();
+
+    gss_name_t user_name = GSS_C_NO_NAME;
+    OM_uint32 min_stat = 0;
+    OM_uint32 maj = gss_import_name(&min_stat, &name_buf, GSS_KRB5_NT_PRINCIPAL_NAME, &user_name);
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat, "importing user principal for S4U2Self");
+        return;
+    }
+
+    gss_cred_id_t impersonated_cred = GSS_C_NO_CREDENTIAL;
+    maj = gss_acquire_cred_impersonate_name(&min_stat, impersonator.cred, user_name, 0,
+        GSS_C_NO_OID_SET, GSS_C_INITIATE, &impersonated_cred, nullptr, nullptr);
+
+    OM_uint32 release_min = 0;
+    gss_release_name(&release_min, &user_name);
+
+    if (maj != GSS_S_COMPLETE) {
+        gss_raise_exception(xsink, "KRB5-GSS-ERROR", maj, min_stat,
+            "acquiring S4U2Self impersonated credential");
+        return;
+    }
+
+    cred = impersonated_cred;
+#else
+    xsink->raiseException("KRB5-NOT-SUPPORTED",
+        "S4U2Self requires gss_acquire_cred_impersonate_name (MIT krb5 1.8 or later)");
+#endif
+}
+
 QoreGssCredential::~QoreGssCredential() {
     if (cred != GSS_C_NO_CREDENTIAL) {
         OM_uint32 min_stat = 0;
@@ -2265,6 +2314,78 @@ QoreKrb5Credentials* QoreKrb5Context::acquireServiceCredentials(const QoreKrb5Cr
         return nullptr;
     }
     return rv.release();
+}
+
+QoreKrb5Credentials* QoreKrb5Context::acquireS4U2ProxyCredentials(const QoreKrb5CredentialCache& cache,
+        const QoreKrb5Credentials& evidence, const QoreKrb5Principal& target, ExceptionSink* xsink) const {
+#ifdef HAVE_KRB5_GC_CONSTRAINED_DELEGATION
+    if (!krb5_check_cache_access(cache.ctx, cache.cache, QSEC_READ | QSEC_WRITE, xsink,
+            "acquiring S4U2Proxy credentials from cache")) {
+        return nullptr;
+    }
+    if (qore_check_cancel(xsink, "acquiring S4U2Proxy credentials")) {
+        return nullptr;
+    }
+
+    krb5_creds in_creds;
+    memset(&in_creds, 0, sizeof(in_creds));
+    Krb5CredsContentsHolder in_creds_holder(cache.ctx, &in_creds);
+
+    // Get the cache's primary principal as the client
+    Krb5PrincipalHolder cache_principal(cache.ctx);
+    krb5_error_code rc = krb5_cc_get_principal(cache.ctx, cache.cache, cache_principal.out());
+    if (rc) {
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-S4U-PROXY-ERROR",
+            "reading cache principal for S4U2Proxy request");
+        return nullptr;
+    }
+
+    in_creds.client = cache_principal.release();
+
+    rc = krb5_copy_principal(cache.ctx, target.principal, &in_creds.server);
+    if (rc) {
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-S4U-PROXY-ERROR",
+            "copying target principal for S4U2Proxy request");
+        return nullptr;
+    }
+
+    // Copy the evidence ticket into second_ticket
+    if (evidence.creds && evidence.creds->ticket.length > 0) {
+        krb5_data* ticket_copy = nullptr;
+        rc = krb5_copy_data(cache.ctx, &evidence.creds->ticket, &ticket_copy);
+        if (rc) {
+            krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-S4U-PROXY-ERROR",
+                "copying evidence ticket for S4U2Proxy request");
+            return nullptr;
+        }
+        in_creds.second_ticket = *ticket_copy;
+        // Free the outer krb5_data struct but keep the copied data buffer
+        // which is now owned by in_creds (freed by krb5_free_cred_contents)
+        free(ticket_copy);
+    } else {
+        xsink->raiseException("KRB5-S4U-PROXY-ERROR", "evidence ticket is empty or invalid");
+        return nullptr;
+    }
+
+    krb5_creds* out_creds = nullptr;
+    rc = krb5_get_credentials(cache.ctx, KRB5_GC_CONSTRAINED_DELEGATION, cache.cache, &in_creds, &out_creds);
+    if (rc) {
+        krb5_raise_exception(xsink, cache.ctx, rc, "KRB5-S4U-PROXY-ERROR",
+            "acquiring S4U2Proxy credentials");
+        return nullptr;
+    }
+
+    SimpleRefHolder<QoreKrb5Credentials> rv(new QoreKrb5Credentials(cache.ctx, *out_creds, xsink));
+    krb5_free_creds(cache.ctx, out_creds);
+    if (*xsink) {
+        return nullptr;
+    }
+    return rv.release();
+#else
+    xsink->raiseException("KRB5-NOT-SUPPORTED",
+        "S4U2Proxy requires KRB5_GC_CONSTRAINED_DELEGATION (MIT krb5 1.8 or later)");
+    return nullptr;
+#endif
 }
 
 QoreListNode* QoreKrb5Context::listCredentialCaches(ExceptionSink* xsink) const {

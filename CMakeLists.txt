@@ -23,6 +23,12 @@ endif()
 
 check_cxx_compiler_flag(-fvisibility=hidden HAVE_GCC_VISIBILITY)
 
+include(CheckSymbolExists)
+set(CMAKE_REQUIRED_INCLUDES ${KRB5_INCLUDE_DIRS} ${GSSAPI_INCLUDE_DIRS})
+set(CMAKE_REQUIRED_LIBRARIES ${KRB5_LIBRARIES} ${GSSAPI_LIBRARIES})
+check_symbol_exists(KRB5_GC_CONSTRAINED_DELEGATION "krb5.h" HAVE_KRB5_GC_CONSTRAINED_DELEGATION)
+check_symbol_exists(gss_acquire_cred_impersonate_name "gssapi/gssapi_ext.h" HAVE_GSS_ACQUIRE_CRED_IMPERSONATE_NAME)
+
 configure_file(${CMAKE_SOURCE_DIR}/cmake/config.h.cmake
                ${CMAKE_BINARY_DIR}/config.h)
 

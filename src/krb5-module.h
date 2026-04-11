@@ -198,6 +198,8 @@ public:
     DLLLOCAL QoreGssCredential(const QoreKrb5Keytab& keytab, const QoreKrb5Principal* principal,
         ExceptionSink* xsink);
     DLLLOCAL explicit QoreGssCredential(gss_cred_id_t existing_cred);
+    DLLLOCAL QoreGssCredential(const QoreGssCredential& impersonator, const QoreKrb5Principal& user,
+        ExceptionSink* xsink);
     DLLLOCAL ~QoreGssCredential() override;
 };
 
@@ -260,6 +262,8 @@ public:
     DLLLOCAL QoreKrb5Credentials* acquireServiceCredentials(const QoreKrb5CredentialCache& cache,
         const QoreKrb5Principal& service, ExceptionSink* xsink) const;
     DLLLOCAL QoreListNode* listCredentialCaches(ExceptionSink* xsink) const;
+    DLLLOCAL QoreKrb5Credentials* acquireS4U2ProxyCredentials(const QoreKrb5CredentialCache& cache,
+        const QoreKrb5Credentials& evidence, const QoreKrb5Principal& target, ExceptionSink* xsink) const;
 };
 
 class QoreKrb5Keytab : public AbstractPrivateData {

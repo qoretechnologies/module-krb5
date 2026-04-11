@@ -352,3 +352,36 @@ Krb5Credentials Krb5Context::acquireServiceCredentials(Krb5CredentialCache[QoreK
 list<hash<Krb5CredentialCacheInfo>> Krb5Context::listCredentialCaches() {
     return ctx->listCredentialCaches(xsink);
 }
+
+//! Acquires credentials for a target service via S4U2Proxy constrained delegation
+/** Uses an evidence ticket (typically obtained via S4U2Self) and a TGT
+    from the provided cache to request a service ticket for the target
+    service principal on behalf of the user identified by the evidence ticket.
+
+    Requires MIT krb5 1.8 or later and KDC configuration that allows the
+    service principal to perform constrained delegation to the target.
+
+    @param cache credential cache containing a valid TGT for the service
+    @param evidence_ticket evidence ticket from S4U2Self
+    @param target_service target service principal
+
+    @return @ref Qore::Krb5::Krb5Credentials for the target service
+
+    @throw KRB5-S4U-PROXY-ERROR if the S4U2Proxy ticket cannot be acquired
+    @throw KRB5-NOT-SUPPORTED if the platform lacks S4U2Proxy support
+    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox
+    @throw FILESYSTEM-ACCESS-DENIED if a file-backed cache is outside the filesystem sandbox
+*/
+Krb5Credentials Krb5Context::acquireS4U2ProxyCredentials(Krb5CredentialCache[QoreKrb5CredentialCache] cache,
+        Krb5Credentials[QoreKrb5Credentials] evidence_ticket,
+        Krb5Principal[QoreKrb5Principal] target_service) [dom=NETWORK] {
+    SimpleRefHolder<QoreKrb5Credentials> creds(
+        ctx->acquireS4U2ProxyCredentials(**cache, **evidence_ticket, **target_service, xsink));
+    if (*xsink) {
+        return QoreValue();
+    }
+
+    ReferenceHolder<QoreObject> rv(new QoreObject(QC_KRB5CREDENTIALS, getProgram()), xsink);
+    rv->setPrivate(CID_KRB5CREDENTIALS, creds.release());
+    return rv.release();
+}
