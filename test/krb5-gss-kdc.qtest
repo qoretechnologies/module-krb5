@@ -26,6 +26,7 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
         addTestCase("delegation credential extracted only once", \testDelegationExtractedOnlyOnce());
         addTestCase("gss mic round trip", \testGssMicRoundTrip());
         addTestCase("gss mic tamper detection", \testGssMicTamperDetection());
+        addTestCase("renew and store with kdc", \testRenewAndStoreWithKdc());
 
         set_return_value(main());
     }
@@ -590,5 +591,29 @@ public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
         assertThrows("KRB5-GSS-ERROR", sub() {
             acceptor.verifyMic("776f726c64", mic.token);
         });
+    }
+
+    private testRenewAndStoreWithKdc() {
+        string realm = requireEnv("MODULE_KRB5_TEST_REALM");
+        string clientPrincipal = requireEnv("MODULE_KRB5_TEST_CLIENT_PRINCIPAL");
+        string clientPassword = requireEnv("MODULE_KRB5_TEST_CLIENT_PASSWORD");
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal principalObj(clientPrincipal);
+
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> opts = getInitOptions();
+        opts.renew_lifetime = 3600;
+        Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(principalObj, clientPassword, opts);
+        auto cache = ctx.createMemoryCredentialCache(principalObj,
+            sprintf("module-krb5-renew-store-%s", realm));
+        cache.initialize(principalObj);
+        cache.storeCredentials(creds);
+
+        # Use a very large threshold so the credential is always within it
+        hash<Krb5Util::RenewAndStoreResult> result = Krb5Util::renewAndStoreIfNeeded(ctx, cache, 99999);
+        assertTrue(result.renewed);
+        assertFalse(result.was_expired);
+        assertTrue(exists result.lifecycle);
+        assertFalse(exists result.error);
     }
 }

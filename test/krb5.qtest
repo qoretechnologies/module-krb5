@@ -49,6 +49,17 @@ public class Krb5ModuleTest inherits QUnit::Test {
             \testUtilityCredentialLifecycleValidation());
         addTestCase("utility credential lifecycle logger diagnostics safe",
             \testUtilityCredentialLifecycleLoggerDiagnosticsSafe());
+        addTestCase("renew and store no tgt", \testRenewAndStoreNoTgt());
+        addTestCase("renew and store expired", \testRenewAndStoreExpired());
+        addTestCase("renew and store validation", \testRenewAndStoreValidation());
+        addTestCase("renew and store logger diagnostics safe",
+            \testRenewAndStoreLoggerDiagnosticsSafe());
+        addTestCase("validate kerberos environment basic",
+            \testValidateKerberosEnvironmentBasic());
+        addTestCase("validate kerberos environment service principal",
+            \testValidateKerberosEnvironmentServicePrincipal());
+        addTestCase("validate kerberos environment logger diagnostics safe",
+            \testValidateKerberosEnvironmentLoggerSafe());
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
         addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
@@ -385,6 +396,111 @@ public class Krb5ModuleTest inherits QUnit::Test {
         string combined = foldl $1 + "\n" + $2, messages;
         assertTrue(combined.find("Krb5Util credential lifecycle") >= 0);
         assertTrue(combined.find("remaining_seconds") >= 0);
+        assertEq(-1, combined.find(getTestKeyHex1()));
+        assertEq(-1, combined.find("abcd"));
+    }
+
+    private testValidateKerberosEnvironmentBasic() {
+        hash<Krb5Util::KerberosEnvironmentInfo> env = Krb5Util::validateKerberosEnvironment();
+        assertTrue(env.warnings instanceof list);
+        assertTrue(env.errors instanceof list);
+        assertTrue(env.healthy instanceof bool);
+        assertEq(env.errors.size() == 0, env.healthy);
+        assertTrue(env.cache_accessible instanceof bool);
+        assertTrue(env.keytab_accessible instanceof bool);
+    }
+
+    private testValidateKerberosEnvironmentServicePrincipal() {
+        hash<Krb5Util::KerberosEnvironmentInfo> env =
+            Krb5Util::validateKerberosEnvironment("HTTP/nonexistent.example.com@EXAMPLE.COM");
+        assertTrue(env instanceof hash);
+        if (env.keytab_accessible && exists env.keytab_entry_count && env.keytab_entry_count > 0) {
+            assertTrue(env.service_principal_in_keytab instanceof bool);
+        }
+        # Always verify the function completes without throwing
+        assertTrue(env.healthy instanceof bool);
+    }
+
+    private testValidateKerberosEnvironmentLoggerSafe() {
+        Qore::Logger::Logger logger("krb5-env-test", "DEBUG");
+        CaptureLogAppender appender();
+        logger.addAppender(appender);
+        appender.open();
+
+        Krb5Util::validateKerberosEnvironment(NOTHING, logger);
+
+        list<string> messages = appender.getMessages();
+        assertTrue(messages.size() >= 2);
+        string combined = foldl $1 + "\n" + $2, messages;
+        assertTrue(combined.find("Krb5Util environment") >= 0);
+    }
+
+    private Qore::Krb5::Krb5Credentials createTestTgt() {
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        Qore::Krb5::Krb5Principal server("krbtgt/EXAMPLE.COM@EXAMPLE.COM");
+        Qore::Krb5::Krb5Credentials creds(client, server, getTestKeyHex1(),
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96, 1000, 2000, 3000, 0x40, "abcd");
+        return creds;
+    }
+
+    private testRenewAndStoreNoTgt() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-renew-no-tgt");
+        cache.initialize(client);
+        cache.storeCredentials(createTestCredentials());
+
+        hash<Krb5Util::RenewAndStoreResult> result = Krb5Util::renewAndStoreIfNeeded(ctx, cache, 300);
+        assertFalse(result.renewed);
+        assertFalse(result.was_expired);
+        assertFalse(exists result.lifecycle);
+        assertFalse(exists result.error);
+    }
+
+    private testRenewAndStoreExpired() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-renew-expired");
+        cache.initialize(client);
+        cache.storeCredentials(createTestTgt());
+
+        # TGT has end_time=2000, which is in the past — should be expired
+        hash<Krb5Util::RenewAndStoreResult> result = Krb5Util::renewAndStoreIfNeeded(ctx, cache, 300);
+        assertFalse(result.renewed);
+        assertTrue(result.was_expired);
+        assertTrue(exists result.lifecycle);
+        assertTrue(result.lifecycle.expired);
+    }
+
+    private testRenewAndStoreValidation() {
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-renew-validation");
+        cache.initialize(client);
+
+        assertThrows("KRB5-RENEW-STORE-ERROR", sub() {
+            Krb5Util::renewAndStoreIfNeeded(ctx, cache, -1);
+        });
+    }
+
+    private testRenewAndStoreLoggerDiagnosticsSafe() {
+        Qore::Logger::Logger logger("krb5-renew-store-test", "DEBUG");
+        CaptureLogAppender appender();
+        logger.addAppender(appender);
+        appender.open();
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal client("alice@EXAMPLE.COM");
+        auto cache = ctx.createMemoryCredentialCache(client, "module-krb5-renew-logger");
+        cache.initialize(client);
+        cache.storeCredentials(createTestTgt());
+
+        Krb5Util::renewAndStoreIfNeeded(ctx, cache, 300, logger);
+
+        list<string> messages = appender.getMessages();
+        assertTrue(messages.size() >= 2);
+        string combined = foldl $1 + "\n" + $2, messages;
+        assertTrue(combined.find("Krb5Util renew-and-store") >= 0);
         assertEq(-1, combined.find(getTestKeyHex1()));
         assertEq(-1, combined.find("abcd"));
     }
