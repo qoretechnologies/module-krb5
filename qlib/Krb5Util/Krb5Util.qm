@@ -1,7 +1,7 @@
 # -*- mode: qore; indent-tabs-mode: nil -*-
-#! @file Krb5.qm Kerberos helper module
+#! @file Krb5Util.qm Kerberos utility module
 
-/*  Krb5.qm Copyright 2026 Qore Technologies, s.r.o.
+/*  Krb5Util.qm Copyright 2026 Qore Technologies, s.r.o.
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the "Software"),
@@ -24,9 +24,9 @@
 
 %modern
 
-module Krb5 {
+module Krb5Util {
     version = "0.1.0";
-    desc = "Kerberos 5 and GSSAPI helper module";
+    desc = "Kerberos 5 and GSSAPI utility module";
     author = "Qore Technologies, s.r.o.";
     url = "https://qore.org";
     license = "MIT";
@@ -34,17 +34,20 @@ module Krb5 {
 
 %requires krb5
 
-/** @mainpage Krb5 Helper Module
+/** @mainpage Krb5Util Module
 
-    @section krb5helperintro Krb5 Helper Module Introduction
+    @section krb5utilintro Krb5Util Module Introduction
 
-    The \c Krb5 module provides small Qore-language helpers on top of the
-    binary \c krb5 module.
+    The \c Krb5Util module provides small Qore-language helpers on top of the
+    binary \c krb5 module. The utility module intentionally uses a distinct
+    name from \c krb5 to avoid conflicts on case-insensitive filesystems.
+
+    Binary classes and constants remain in the \c Qore::Krb5 namespace; helper
+    functions are exported from the \c Krb5Util namespace.
 */
 
-public namespace Qore::Krb5 {
+public namespace Krb5Util {
     public string sub getHostBasedServicePrincipal(string service, string host, string realm) {
         return sprintf("%s/%s@%s", service, host, realm);
     }
 }
-

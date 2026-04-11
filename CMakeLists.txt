@@ -65,7 +65,7 @@ target_include_directories(${module_name} PUBLIC ${KRB5_INCLUDE_DIRS} ${GSSAPI_I
 set(KRB5_LINK_FLAGS ${KRB5_LDFLAGS} ${GSSAPI_LDFLAGS})
 qore_external_binary_module(${module_name} ${PROJECT_VERSION} ${KRB5_LINK_FLAGS})
 
-qore_external_user_module("qlib/Krb5" "")
+qore_external_user_module("qlib/Krb5Util" "")
 
 install(PROGRAMS
     bin/qklist

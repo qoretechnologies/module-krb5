@@ -13,4 +13,6 @@
 - added typed `GssClientContextOptions` for initiator flags, lifetime, and mechanism selection
 - added GSSAPI channel-binding options for hardened SASL/GSSAPI deployments
 - added GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity and confidentiality layers
+- added the `Krb5Util` Qore helper module; this deliberately does not use the name `Krb5` to avoid conflicts with
+  the binary `krb5` module on case-insensitive filesystems
 - added initial documentation, examples, and tests

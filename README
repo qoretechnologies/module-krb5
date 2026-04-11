@@ -3,6 +3,9 @@ Qore krb5 module
 INTRODUCTION
 ------------
 The Qore krb5 module provides Kerberos 5 and GSSAPI primitives for Qore.
+The binary module is named `krb5`; Qore-language helpers are provided by the
+separate `Krb5Util` module to avoid filename conflicts on case-insensitive
+filesystems.
 
 This initial implementation provides:
 - Kerberos default realm and credential-cache helpers
@@ -18,6 +21,7 @@ This initial implementation provides:
 - GSSAPI context stepping with hex-encoded tokens and configurable initiator flags
 - GSSAPI channel bindings for hardened SASL/GSSAPI deployments
 - GSSAPI message wrap/unwrap helpers for negotiated integrity and confidentiality layers
+- a `Krb5Util` helper module for Qore-language Kerberos utilities
 
 Initial credential acquisition supports AD-oriented security options such as
 KDC canonicalization, Windows PAC requests, requested enctypes, FAST armor
@@ -45,6 +49,13 @@ CMake build:
 
 To run the local tests from the repo root:
   test/run-tests.sh
+
+Qore code that needs the binary API should use:
+  %requires krb5
+
+Qore code that needs helper functions such as
+Krb5Util::getHostBasedServicePrincipal() should use:
+  %requires Krb5Util
 
 QUESTIONS
 ---------

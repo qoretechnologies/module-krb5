@@ -2,9 +2,11 @@
 %modern
 %requires QUnit
 %requires krb5
+%requires Krb5Util
 
 class Krb5ModuleTest inherits QUnit::Test {
     constructor() {
+        addTestCase("utility module helpers", \testUtilityModuleHelpers());
         addTestCase("context defaults", \testContextDefaults());
         addTestCase("default credential cache metadata", \testDefaultCredentialCacheMetadata());
         addTestCase("default keytab metadata", \testDefaultKeytabMetadata());
@@ -80,6 +82,11 @@ class Krb5ModuleTest inherits QUnit::Test {
 
     private string getTestKeyHex2() {
         return "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
+    }
+
+    private testUtilityModuleHelpers() {
+        assertEq("ldap/ad.example.com@EXAMPLE.COM",
+            Krb5Util::getHostBasedServicePrincipal("ldap", "ad.example.com", "EXAMPLE.COM"));
     }
 
     private testContextDefaults() {

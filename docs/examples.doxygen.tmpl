@@ -1,5 +1,15 @@
 /** @page krb5examples Examples
 
+    @section krb5examples_util Utility Module
+
+    @code{.qore}
+%modern
+%requires Krb5Util
+
+string service = Krb5Util::getHostBasedServicePrincipal(
+    "ldap", "ad.example.com", "EXAMPLE.COM");
+    @endcode
+
     @section krb5examples_principal Principal Parsing
 
     @code{.qore}

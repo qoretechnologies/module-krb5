@@ -2,10 +2,14 @@
 
     @tableofcontents
 
-    @section krb5intro Krb5 Module Introduction
+    @section krb5intro krb5 Binary Module Introduction
 
     The \c krb5 module provides Kerberos 5 and GSSAPI primitives for secure
     enterprise authentication integrations.
+
+    The Qore-language utility module is named \c Krb5Util rather than \c Krb5
+    so that it cannot conflict with the binary \c krb5 module on
+    case-insensitive filesystems.
 
     This initial release focuses on:
     - Kerberos default realm and credential-cache discovery
@@ -43,4 +47,10 @@
     - @ref Qore::Krb5::Krb5Principal
     - @ref Qore::Krb5::GssCredential
     - @ref Qore::Krb5::GssClientContext
+
+    @section krb5util Utility Module
+
+    Use \c "%requires Krb5Util" for Qore-language helper functions such as
+    \c Krb5Util::getHostBasedServicePrincipal(). Binary classes and constants
+    remain in the \c Qore::Krb5 namespace.
 */
