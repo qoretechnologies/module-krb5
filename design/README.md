@@ -78,6 +78,12 @@ output buffers are released even on early-return error paths.
 - SPNEGO helpers for HTTP Negotiate token envelopes and client/server
   header-level token loops.
 - Basic credential delegation through `GssAcceptorContext`.
+- GSSAPI MIC (Message Integrity Code) compute and verify.
+- Credential cache collection discovery across all configured backends.
+- S4U2Self credential impersonation via `gss_acquire_cred_impersonate_name()`
+  and S4U2Proxy constrained delegation via `KRB5_GC_CONSTRAINED_DELEGATION`.
+- Credential renewal workflow helper (`renewAndStoreIfNeeded`).
+- Kerberos environment validation helper (`validateKerberosEnvironment`).
 - No KDC replication, admin (kadmin) operations, or prompter callbacks.
 
 ## Logging model
@@ -96,13 +102,11 @@ and ticket lifetimes.
 
 - **HTTP Negotiate workflows** — web-server adapter examples, session binding
   patterns, and policy checks around completed contexts.
-- **Credential lifecycle workflows** — logger-aware renew-and-store workflows
-  for long-running services.
+- **Credential lifecycle workflows** — logger-aware renew-and-store loop
+  helpers with configurable retry and backoff for long-running services.
 - **Keytab rotation workflows** — dry-run reports, policy checks, and
   logger-aware keytab cleanup orchestration for service deployments.
-- **Constrained delegation** — S4U2Self and S4U2Proxy for identity-forwarding
-  services.
-- **Deployment diagnostics** — logger-aware validation reports for realm,
-  cache, keytab, service principal, enctype, and ticket state.
 - **Cross-realm trust ergonomics** — helpers around canonicalization and
   explicit realm handling for multi-tenant deployments.
+- **SASL/GSSAPI integration** — higher-level helpers for LDAP and other
+  SASL/GSSAPI bind patterns using MIC for final authentication steps.

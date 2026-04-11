@@ -36,8 +36,15 @@ The module provides:
   application data for hardened SASL/GSSAPI deployments
 - GSSAPI wrap, unwrap, and wrap-size-limit helpers for negotiated integrity
   and confidentiality layers
+- GSSAPI MIC (Message Integrity Code) compute and verify for standalone
+  integrity tokens used in SASL/GSSAPI integrity verification
+- Credential cache collection discovery across all configured backends
+- S4U2Self credential impersonation and S4U2Proxy constrained delegation
+  for identity-forwarding service architectures
 - Keytab entry removal for key rotation workflows
 - Keytab rotation helpers for highest-kvno discovery and old-entry cleanup
+- Credential renewal workflow helper for long-running services
+- Kerberos environment validation for deployment diagnostics
 - a `Krb5Util` helper module with Qore-language Kerberos and SPNEGO utilities,
   including HTTP Negotiate client/server step helpers
 
