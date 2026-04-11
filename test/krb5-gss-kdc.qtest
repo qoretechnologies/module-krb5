@@ -1,0 +1,101 @@
+#!/usr/bin/env qore
+%modern
+%requires QUnit
+%requires krb5
+
+%exec-class Krb5GssKdcIntegrationTest
+
+public class Krb5GssKdcIntegrationTest inherits QUnit::Test {
+    constructor() : Test("Krb5GssKdcIntegrationTest", "1.0") {
+        addTestCase("full gss initiator acceptor exchange", \testFullGssExchange());
+
+        set_return_value(main());
+    }
+
+    private string requireEnv(string name) {
+        *string value = getenv(name);
+        if (!value || value == "") {
+            testSkip(sprintf("environment variable %s is not set", name));
+        }
+        return value;
+    }
+
+    private testFullGssExchange() {
+        string realm = requireEnv("MODULE_KRB5_TEST_REALM");
+        string clientPrincipal = requireEnv("MODULE_KRB5_TEST_CLIENT_PRINCIPAL");
+        string clientPassword = requireEnv("MODULE_KRB5_TEST_CLIENT_PASSWORD");
+        string servicePrincipal = requireEnv("MODULE_KRB5_TEST_SERVICE_PRINCIPAL");
+        string serviceKeytab = requireEnv("MODULE_KRB5_TEST_SERVICE_KEYTAB");
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal clientPrincipalObj(clientPrincipal);
+        Qore::Krb5::Krb5Principal servicePrincipalObj(servicePrincipal);
+
+        hash<Qore::Krb5::Krb5InitialCredentialsOptions> initOpts();
+        initOpts.canonicalize = True;
+        initOpts.enctypes = (
+            Qore::Krb5::ENCTYPE_AES256_CTS_HMAC_SHA1_96,
+            Qore::Krb5::ENCTYPE_AES128_CTS_HMAC_SHA1_96,
+        );
+
+        Qore::Krb5::Krb5Credentials creds = ctx.acquireCredentialsWithPassword(
+            clientPrincipalObj, clientPassword, initOpts);
+        auto cc = ctx.createMemoryCredentialCache(clientPrincipalObj,
+            sprintf("module-krb5-gss-kdc-%s", realm));
+        cc.initialize(clientPrincipalObj);
+        cc.storeCredentials(creds);
+
+        Qore::Krb5::GssCredential initiatorCred = Qore::Krb5::GssCredential::fromCredentialCache(cc);
+        Qore::Krb5::Krb5Keytab kt = ctx.openKeytab("FILE:" + serviceKeytab);
+        Qore::Krb5::GssCredential acceptorCred = Qore::Krb5::GssCredential::fromKeytab(kt, servicePrincipalObj);
+
+        string channelBindingHex = "746573742d746c732d7365727665722d656e642d62696e64696e67";
+
+        hash<Qore::Krb5::GssClientContextOptions> clientOpts();
+        clientOpts.flags = Qore::Krb5::GSS_DEFAULT_FLAGS | Qore::Krb5::GSS_CONF_FLAG
+            | Qore::Krb5::GSS_CHANNEL_BOUND_FLAG;
+        clientOpts.mechanism = "kerberos";
+        clientOpts.name_type = "krb5-principal";
+        clientOpts.channel_binding_application_data_hex = channelBindingHex;
+
+        hash<Qore::Krb5::GssAcceptorContextOptions> acceptorOpts();
+        acceptorOpts.channel_binding_application_data_hex = channelBindingHex;
+
+        Qore::Krb5::GssClientContext initiator(servicePrincipal, initiatorCred, clientOpts);
+        Qore::Krb5::GssAcceptorContext acceptor(acceptorCred, acceptorOpts);
+
+        *string initiatorToken;
+        *string acceptorToken;
+        int rounds = 0;
+        while ((!initiator.isComplete() || !acceptor.isComplete()) && rounds < 10) {
+            ++rounds;
+            if (!initiator.isComplete()) {
+                hash<Qore::Krb5::GssStepInfo> initiatorInfo = acceptorToken
+                    ? initiator.step(acceptorToken)
+                    : initiator.step();
+                initiatorToken = initiatorInfo.token;
+            }
+            if (!acceptor.isComplete()) {
+                assertTrue(initiatorToken != NOTHING, "initiator must produce a token before acceptor completion");
+                hash<Qore::Krb5::GssStepInfo> acceptorInfo = acceptor.step(initiatorToken);
+                acceptorToken = acceptorInfo.token;
+            }
+        }
+
+        assertTrue(rounds < 10, "GSSAPI negotiation must finish within the bounded token loop");
+        assertTrue(initiator.isComplete());
+        assertTrue(acceptor.isComplete());
+        assertEq(clientPrincipal, acceptor.getInitiatorName());
+
+        hash<Qore::Krb5::GssWrapInfo> wrapped = initiator.wrap("68656c6c6f", True);
+        hash<Qore::Krb5::GssUnwrapInfo> plain = acceptor.unwrap(wrapped.token);
+        assertEq("68656c6c6f", plain.message);
+
+        hash<Qore::Krb5::GssWrapInfo> response = acceptor.wrap("776f726c64", True);
+        hash<Qore::Krb5::GssUnwrapInfo> responsePlain = initiator.unwrap(response.token);
+        assertEq("776f726c64", responsePlain.message);
+
+        assertTrue(initiator.getWrapSizeLimit(16384, True) > 0);
+        assertTrue(acceptor.getWrapSizeLimit(16384, True) > 0);
+    }
+}

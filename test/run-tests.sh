@@ -31,3 +31,9 @@ cmake --build "$build_dir"
 export QORE_MODULE_DIR="$repo_dir/qlib:$build_dir:${QORE_MODULE_DIR:-}"
 cd "$repo_dir/test"
 "$qore_bin" --enable-debug krb5.qtest -v
+
+if command -v krb5kdc >/dev/null && command -v kadmin.local >/dev/null && command -v kdb5_util >/dev/null; then
+    "$repo_dir/test/run-gss-kdc-integration.sh"
+else
+    echo "skipping GSS/KDC integration test: krb5kdc, kadmin.local, or kdb5_util not available"
+fi
