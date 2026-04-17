@@ -153,14 +153,24 @@ public class Krb5ModuleTest inherits QUnit::Test {
         addTestCase("list credential caches returns list", \testListCredentialCachesReturnsList());
         addTestCase("list credential caches contains memory cache",
             \testListCredentialCachesContainsMemoryCache());
+        addTestCase("list credential caches redacts sandbox denied cache",
+            \testListCredentialCachesSandboxRedaction());
         addTestCase("gss invalid token hex", \testGssInvalidHex());
         addTestCase("gss empty target rejected", \testGssEmptyTarget());
         addTestCase("credential acquisition requires NETWORK domain",
             \testAcquireCredentialsRequiresNetworkDomain());
+        addTestCase("credential acquisition denies unmanaged network sandbox",
+            \testAcquireCredentialsNetworkSandboxDeny());
+        addTestCase("credential acquisition honors pre-call cancellation",
+            \testAcquireCredentialsPreCancelled());
         addTestCase("keytab credential acquisition requires NETWORK domain",
             \testAcquireCredentialsWithKeytabRequiresNetworkDomain());
         addTestCase("gss client context requires NETWORK domain",
             \testGssClientContextRequiresNetworkDomain());
+        addTestCase("gss client context denies unmanaged network sandbox",
+            \testGssClientContextNetworkSandboxDeny());
+        addTestCase("gss client context honors pre-call cancellation",
+            \testGssClientContextPreCancelled());
         addTestCase("gss acceptor context requires NETWORK domain",
             \testGssAcceptorContextRequiresNetworkDomain());
         addTestCase("gss credential import requires FILESYSTEM domain",
@@ -1577,6 +1587,45 @@ Krb5Util::createImpersonatedClientContext(\"HTTP/backend.example.com@EXAMPLE.COM
         });
     }
 
+    private testAcquireCredentialsNetworkSandboxDeny() {
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse("
+            nothing sub test_network_sandbox_denied() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                ctx.acquireCredentialsWithPassword(principal, \"secret\");
+            }
+        ", "network_sandbox_acquire_password");
+
+        SandboxManager sm();
+        p.setSandboxManager(sm);
+
+        assertThrows("KRB5-SANDBOX-ERROR", "fine-grained network sandbox", sub() {
+            p.callFunction("test_network_sandbox_denied");
+        });
+    }
+
+    private testAcquireCredentialsPreCancelled() {
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse("
+            nothing sub test_pre_cancelled_acquire() {
+                Qore::Krb5::Krb5Context ctx();
+                Qore::Krb5::Krb5Principal principal(\"alice@EXAMPLE.COM\");
+                ctx.acquireCredentialsWithPassword(principal, \"secret\");
+            }
+        ", "pre_cancelled_acquire_password");
+
+        SandboxManager sm();
+        sm.requestInterrupt();
+        p.setSandboxManager(sm);
+
+        assertThrows("PROGRAM-INTERRUPTED", sub() {
+            p.callFunction("test_pre_cancelled_acquire");
+        });
+    }
+
     private testAcquireCredentialsWithKeytabRequiresNetworkDomain() {
         Program p(PO_MODERN | PO_NO_NETWORK);
         p.loadModule("krb5");
@@ -1602,6 +1651,43 @@ Krb5Util::createImpersonatedClientContext(\"HTTP/backend.example.com@EXAMPLE.COM
                     ctx.step();
                 }
             ", "no_network_gss_step");
+        });
+    }
+
+    private testGssClientContextNetworkSandboxDeny() {
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse("
+            nothing sub test_gss_network_sandbox_denied() {
+                Qore::Krb5::GssClientContext ctx(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                ctx.step();
+            }
+        ", "network_sandbox_gss_step");
+
+        SandboxManager sm();
+        p.setSandboxManager(sm);
+
+        assertThrows("KRB5-SANDBOX-ERROR", "fine-grained network sandbox", sub() {
+            p.callFunction("test_gss_network_sandbox_denied");
+        });
+    }
+
+    private testGssClientContextPreCancelled() {
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse("
+            nothing sub test_pre_cancelled_gss_step() {
+                Qore::Krb5::GssClientContext ctx(\"HTTP/qorus.example.com@EXAMPLE.COM\");
+                ctx.step();
+            }
+        ", "pre_cancelled_gss_step");
+
+        SandboxManager sm();
+        sm.requestInterrupt();
+        p.setSandboxManager(sm);
+
+        assertThrows("PROGRAM-INTERRUPTED", sub() {
+            p.callFunction("test_pre_cancelled_gss_step");
         });
     }
 
@@ -1815,6 +1901,7 @@ Krb5Util::createImpersonatedClientContext(\"HTTP/backend.example.com@EXAMPLE.COM
             assertTrue(entry.name instanceof string);
             assertTrue(entry.type instanceof string);
             assertTrue(entry.full_name instanceof string);
+            assertTrue(entry.accessible instanceof bool);
             assertTrue(entry.has_principal instanceof bool);
         }
     }
@@ -1828,7 +1915,12 @@ Krb5Util::createImpersonatedClientContext(\"HTTP/backend.example.com@EXAMPLE.COM
         assertTrue(caches instanceof list);
         foreach hash<Qore::Krb5::Krb5CredentialCacheInfo> entry in (caches) {
             assertTrue(entry.type.val());
-            assertTrue(entry.full_name.val());
+            if (entry.accessible) {
+                assertTrue(entry.full_name.val());
+            } else {
+                assertEq("", entry.name);
+                assertEq("", entry.full_name);
+            }
             if (entry.has_principal) {
                 assertTrue(entry.principal.val());
             }
@@ -1836,6 +1928,61 @@ Krb5Util::createImpersonatedClientContext(\"HTTP/backend.example.com@EXAMPLE.COM
         # Call again to verify cursor cleanup and reuse works
         list<hash<Qore::Krb5::Krb5CredentialCacheInfo>> caches2 = ctx.listCredentialCaches();
         assertEq(caches.size(), caches2.size());
+    }
+
+    private testListCredentialCachesSandboxRedaction() {
+        string cachePath = getSandboxCachePath("collection-redaction");
+        cleanupSandboxCache(cachePath);
+
+        Qore::Krb5::Krb5Context ctx();
+        Qore::Krb5::Krb5Principal principal("service/qorus.example.com@EXAMPLE.COM");
+        auto cc = ctx.openCredentialCache("FILE:" + cachePath);
+        cc.initialize(principal);
+
+        *string oldCacheName = getenv("KRB5CCNAME");
+        setenv("KRB5CCNAME", "FILE:" + cachePath);
+        on_error {
+            if (exists oldCacheName) {
+                setenv("KRB5CCNAME", oldCacheName);
+            } else {
+                unsetenv("KRB5CCNAME");
+            }
+            cleanupSandboxCache(cachePath);
+        }
+
+        Program p(PO_MODERN);
+        p.loadModule("krb5");
+        p.parse("
+            list<hash<Qore::Krb5::Krb5CredentialCacheInfo>> sub test_collection_redaction() {
+                Qore::Krb5::Krb5Context ctx();
+                return ctx.listCredentialCaches();
+            }
+        ", "sandbox_denied_collection");
+
+        SandboxManager sm();
+        sm.setFilesystemSandboxRoot("/var");
+        p.setSandboxManager(sm);
+
+        list<hash<Qore::Krb5::Krb5CredentialCacheInfo>> caches = p.callFunction("test_collection_redaction");
+        if (exists oldCacheName) {
+            setenv("KRB5CCNAME", oldCacheName);
+        } else {
+            unsetenv("KRB5CCNAME");
+        }
+
+        bool foundRedacted = False;
+        foreach hash<Qore::Krb5::Krb5CredentialCacheInfo> entry in (caches) {
+            if (entry.type == "FILE" && !entry.accessible) {
+                foundRedacted = True;
+                assertEq("", entry.name);
+                assertEq("", entry.full_name);
+                assertFalse(entry.has_principal);
+                assertFalse(exists entry.principal);
+            }
+        }
+        assertTrue(foundRedacted);
+
+        cleanupSandboxCache(cachePath);
     }
 
     private testInitialCredentialsBooleanOptionsAccepted() {

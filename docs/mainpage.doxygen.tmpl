@@ -2,7 +2,7 @@
 
     @tableofcontents
 
-    @section krb5intro Introduction
+    @section krb5intro krb5 Module Introduction
 
     The \c krb5 module provides
     <a href="https://web.mit.edu/kerberos/">Kerberos 5</a> and
@@ -54,12 +54,13 @@ printf("default realm: %s\n", ctx.getDefaultRealm());
 
     @section krb5pages Documentation Sections
 
-    - @ref krb5usecases — how the module fits the %Qore and Qorus ecosystems
+    - @subpage krb5usecases — how the module fits the %Qore and Qorus ecosystems
       and what integrations it enables
-    - @ref krb5security — the module's security model and guarantees
-    - @ref krb5examples — runnable examples for principal parsing,
+    - @subpage krb5security — the module's security model and guarantees
+    - @subpage krb5examples — runnable examples for principal parsing,
       credential acquisition, GSSAPI context stepping, channel bindings,
       message protection, keytab setup, and filesystem-sandboxed usage
+    - @subpage krb5releasenotes — release notes and version history
     - @ref krb5utilintro in the \c Krb5Util %Qore-language helper module
       documentation
 

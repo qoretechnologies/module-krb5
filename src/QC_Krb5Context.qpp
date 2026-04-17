@@ -91,6 +91,9 @@ hashdecl Qore::Krb5::Krb5CredentialCacheInfo {
     //! Full cache specification including type, for example \c "FILE:/tmp/krb5cc_1000"
     string full_name;
 
+    //! True if the cache was accessible under the active filesystem sandbox
+    bool accessible;
+
     //! True if the cache has an initialized primary principal
     bool has_principal;
 
@@ -238,7 +241,9 @@ Krb5CredentialCache Krb5Context::createMemoryCredentialCache(Krb5Principal[QoreK
     @throw KRB5-INIT-CREDS-ERROR if the password is empty, option values
     are invalid, or the KDC rejects the request
     @throw KRB5-SANDBOX-ERROR if any FAST, input, or output cache option
-    names a backend that is not allowed by the sandbox
+    names a backend that is not allowed by the sandbox, or if the active
+    network sandbox policy cannot be enforced while MIT Kerberos contacts
+    the KDC
     @throw FILESYSTEM-ACCESS-DENIED if any option-specified cache lies
     outside the filesystem sandbox
 */
@@ -268,7 +273,8 @@ Krb5Credentials Krb5Context::acquireCredentialsWithPassword(Krb5Principal[QoreKr
     @throw KRB5-INIT-CREDS-ERROR if option values are invalid, the keytab
     has no matching entry, or the KDC rejects the request
     @throw KRB5-SANDBOX-ERROR if the keytab backend or any option-specified
-    cache is not allowed by the sandbox
+    cache is not allowed by the sandbox, or if the active network sandbox
+    policy cannot be enforced while MIT Kerberos contacts the KDC
     @throw FILESYSTEM-ACCESS-DENIED if the keytab or any option-specified
     cache lies outside the filesystem sandbox
 */
@@ -295,7 +301,9 @@ Krb5Credentials Krb5Context::acquireCredentialsWithKeytab(Krb5Principal[QoreKrb5
     @return renewed @ref Qore::Krb5::Krb5Credentials
 
     @throw KRB5-RENEW-ERROR if the credentials cannot be renewed
-    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox
+    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox,
+    or if the active network sandbox policy cannot be enforced while MIT
+    Kerberos contacts the KDC
     @throw FILESYSTEM-ACCESS-DENIED if a file-backed cache is outside the filesystem sandbox
 */
 Krb5Credentials Krb5Context::renewCredentials(Krb5CredentialCache[QoreKrb5CredentialCache] cache,
@@ -321,7 +329,9 @@ Krb5Credentials Krb5Context::renewCredentials(Krb5CredentialCache[QoreKrb5Creden
     @return @ref Qore::Krb5::Krb5Credentials for the service
 
     @throw KRB5-SERVICE-CREDS-ERROR if the service ticket cannot be acquired
-    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox
+    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox,
+    or if the active network sandbox policy cannot be enforced while MIT
+    Kerberos contacts the KDC
     @throw FILESYSTEM-ACCESS-DENIED if a file-backed cache is outside the filesystem sandbox
 */
 Krb5Credentials Krb5Context::acquireServiceCredentials(Krb5CredentialCache[QoreKrb5CredentialCache] cache,
@@ -372,7 +382,9 @@ list<hash<Krb5CredentialCacheInfo>> Krb5Context::listCredentialCaches() {
 
     @throw KRB5-S4U-PROXY-ERROR if the S4U2Proxy ticket cannot be acquired
     @throw KRB5-NOT-SUPPORTED if the platform lacks S4U2Proxy support
-    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox
+    @throw KRB5-SANDBOX-ERROR if the cache backend is not allowed by the sandbox,
+    or if the active network sandbox policy cannot be enforced while MIT
+    Kerberos contacts the KDC
     @throw FILESYSTEM-ACCESS-DENIED if a file-backed cache is outside the filesystem sandbox
 */
 Krb5Credentials Krb5Context::acquireS4U2ProxyCredentials(Krb5CredentialCache[QoreKrb5CredentialCache] cache,

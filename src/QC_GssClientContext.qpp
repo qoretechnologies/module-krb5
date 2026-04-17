@@ -219,12 +219,15 @@ nothing GssClientContext::reset() {
 //! Advances the initiator security context
 /** This method should be called in a loop until @ref Qore::Krb5::GssStepInfo::complete is
     \c True, exchanging hex-encoded tokens with the acceptor each round.
-    Cooperative cancellation is checked before each GSSAPI call, so long-running
-    KDC exchanges can be interrupted cleanly.
+    Cooperative cancellation is checked before each GSSAPI call. After control
+    enters the MIT GSSAPI library, cancellation is observed when that library
+    call returns.
 
     @return a @ref Qore::Krb5::GssStepInfo describing the step result
 
     @throw KRB5-GSS-ERROR if the GSSAPI negotiation fails
+    @throw KRB5-SANDBOX-ERROR if the active network sandbox policy cannot
+    be enforced while MIT GSSAPI contacts the KDC
 */
 hash<GssStepInfo> GssClientContext::step() {
     return ctx->step(nullptr, xsink);
@@ -237,6 +240,8 @@ hash<GssStepInfo> GssClientContext::step() {
 
     @throw KRB5-TOKEN-ERROR if \a token_hex is not valid hexadecimal
     @throw KRB5-GSS-ERROR if the GSSAPI negotiation fails
+    @throw KRB5-SANDBOX-ERROR if the active network sandbox policy cannot
+    be enforced while MIT GSSAPI contacts the KDC
 */
 hash<GssStepInfo> GssClientContext::step(string token_hex) {
     return ctx->step(token_hex->c_str(), xsink);

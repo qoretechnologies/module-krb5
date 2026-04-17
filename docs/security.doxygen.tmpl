@@ -103,6 +103,23 @@
     that new MIT Kerberos backends cannot accidentally become
     sandbox-reachable without review.
 
+    Credential-cache collection enumeration also checks each discovered cache
+    before reading cache details. If the active filesystem sandbox denies a
+    cache, the returned @ref Qore::Krb5::Krb5CredentialCacheInfo entry has
+    \c accessible set to \c False and does not expose the cache path or
+    principal.
+
+    @section krb5sec_network_sandbox Network Sandbox
+
+    KDC exchanges are executed by the MIT Kerberos and GSSAPI libraries. Those
+    libraries perform their own DNS resolution and socket I/O, so this module
+    cannot apply %Qore's fine-grained network sandbox post-resolution
+    \c checkConnect() policy inside an in-progress library call. To avoid a
+    sandbox escape, KDC-contacting operations fail closed with
+    \c KRB5-SANDBOX-ERROR whenever a sandbox manager has active network
+    restrictions that cannot be enforced by this module. A sandbox whose
+    network policy is explicitly unrestricted is allowed through.
+
     @section krb5sec_domains Functional Domains
 
     The module declares functional domains so that %Qore program-level
@@ -131,8 +148,9 @@
     Every blocking operation — initial credential acquisition, GSSAPI
     context initialization, and GSSAPI message protection — checks for
     cooperative thread cancellation before calling into the underlying
-    library. Long-running authentication attempts in Qorus workflows can
-    therefore be interrupted cleanly.
+    library. Once control has entered MIT Kerberos or GSSAPI, this module
+    regains cancellation control when the library call returns; callers should
+    still configure Kerberos timeouts appropriate for their deployment.
 
     @section krb5sec_exceptions Exception Reference
 
@@ -180,7 +198,9 @@
       failure (for example empty input, invalid hex, invalid base64, or a
       malformed NegTokenResp that does not contain a responseToken field)
     - \c KRB5-SANDBOX-ERROR — a credential-cache or keytab backend is not
-      on the sandbox allowlist (see @ref krb5sec_sandbox)
+      on the sandbox allowlist, or a KDC-contacting operation cannot
+      enforce the active network sandbox policy (see @ref krb5sec_sandbox
+      and @ref krb5sec_network_sandbox)
 
     In addition, any filesystem sandbox violation surfaces as the standard
     \c FILESYSTEM-ACCESS-DENIED exception from the %Qore sandbox manager.

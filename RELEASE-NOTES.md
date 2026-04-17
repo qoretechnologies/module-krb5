@@ -1,1 +1,1 @@
-please see doxygen-generated release notes: source in docs/mainpage.doxygen.tmpl
+please see doxygen-generated release notes: source in docs/release-notes.doxygen.tmpl

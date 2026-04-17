@@ -61,6 +61,7 @@ set(QORE_DOX_TMPL_SRC
     docs/usecases.doxygen.tmpl
     docs/security.doxygen.tmpl
     docs/examples.doxygen.tmpl
+    docs/release-notes.doxygen.tmpl
 )
 
 if (DEFINED ENV{DOXYGEN_EXECUTABLE})

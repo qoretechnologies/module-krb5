@@ -439,6 +439,38 @@ static bool krb5_check_keytab_access(krb5_context ctx, krb5_keytab keytab, int m
     return false;
 }
 
+static bool krb5_network_sandbox_allows_unmanaged_library_io(ExceptionSink* xsink, const char* context) {
+    QoreSandboxManagerHelper smh;
+    if (!smh) {
+        return true;
+    }
+
+    ReferenceHolder<QoreHashNode> config(smh->network().getConfiguration(xsink), xsink);
+    if (*xsink) {
+        return false;
+    }
+
+    QoreValue policy = config->getKeyValue("default_policy");
+    const QoreStringNode* policy_str = policy.get<const QoreStringNode>();
+    bool default_allow = policy_str && !strcmp(policy_str->c_str(), "allow");
+    const QoreListNode* allowed_hosts = config->getKeyValue("allowed_hosts").get<const QoreListNode>();
+    const QoreListNode* allowed_ports = config->getKeyValue("allowed_ports").get<const QoreListNode>();
+    bool unrestricted = default_allow
+        && (!allowed_hosts || allowed_hosts->empty())
+        && (!allowed_ports || allowed_ports->empty())
+        && !config->getKeyValue("allowed_ranges_count").getAsBigInt()
+        && !config->getKeyValue("denied_ranges_count").getAsBigInt();
+
+    if (unrestricted) {
+        return true;
+    }
+
+    xsink->raiseException("KRB5-SANDBOX-ERROR",
+        "%s: MIT Kerberos/GSSAPI performs KDC network I/O internally, so this module cannot enforce "
+        "the active fine-grained network sandbox policy with post-DNS checks", context);
+    return false;
+}
+
 DLLLOCAL QoreStringNode* krb5_unparse_principal(krb5_context ctx, krb5_const_principal principal, ExceptionSink* xsink,
         const char* err, const char* context) {
     char* name = nullptr;
@@ -793,6 +825,9 @@ void QoreGssClientContext::reset() {
 
 QoreHashNode* QoreGssClientContext::step(const char* token_hex, ExceptionSink* xsink) {
     if (qore_check_cancel(xsink, "gssapi context initialization")) {
+        return nullptr;
+    }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink, "initializing GSSAPI security context")) {
         return nullptr;
     }
 
@@ -1472,6 +1507,9 @@ QoreGssCredential::QoreGssCredential(const QoreGssCredential& impersonator, cons
         return;
     }
     if (qore_check_cancel(xsink, "acquiring S4U2Self impersonated credential")) {
+        return;
+    }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink, "acquiring S4U2Self impersonated credential")) {
         return;
     }
 
@@ -2183,6 +2221,10 @@ QoreKrb5Credentials* QoreKrb5Context::acquireCredentialsWithPassword(const QoreK
     if (*xsink) {
         return nullptr;
     }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink,
+            "acquiring initial credentials with password")) {
+        return nullptr;
+    }
 
     krb5_creds creds;
     memset(&creds, 0, sizeof(creds));
@@ -2216,6 +2258,10 @@ QoreKrb5Credentials* QoreKrb5Context::acquireCredentialsWithKeytab(const QoreKrb
     if (*xsink) {
         return nullptr;
     }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink,
+            "acquiring initial credentials with keytab")) {
+        return nullptr;
+    }
 
     krb5_creds creds;
     memset(&creds, 0, sizeof(creds));
@@ -2241,6 +2287,9 @@ QoreKrb5Credentials* QoreKrb5Context::renewCredentials(const QoreKrb5CredentialC
         return nullptr;
     }
     if (qore_check_cancel(xsink, "renewing credentials")) {
+        return nullptr;
+    }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink, "renewing credentials")) {
         return nullptr;
     }
 
@@ -2275,6 +2324,9 @@ QoreKrb5Credentials* QoreKrb5Context::acquireServiceCredentials(const QoreKrb5Cr
         return nullptr;
     }
     if (qore_check_cancel(xsink, "acquiring service credentials")) {
+        return nullptr;
+    }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink, "acquiring service credentials")) {
         return nullptr;
     }
 
@@ -2324,6 +2376,9 @@ QoreKrb5Credentials* QoreKrb5Context::acquireS4U2ProxyCredentials(const QoreKrb5
         return nullptr;
     }
     if (qore_check_cancel(xsink, "acquiring S4U2Proxy credentials")) {
+        return nullptr;
+    }
+    if (!krb5_network_sandbox_allows_unmanaged_library_io(xsink, "acquiring S4U2Proxy credentials")) {
         return nullptr;
     }
 
@@ -2427,35 +2482,50 @@ QoreListNode* QoreKrb5Context::listCredentialCaches(ExceptionSink* xsink) const 
 
         const char* type = krb5_cc_get_type(ctx, cc);
         const char* name = krb5_cc_get_name(ctx, cc);
-        info->setKeyValue("type", new QoreStringNode(type ? type : ""), xsink);
-        info->setKeyValue("name", new QoreStringNode(name ? name : ""), xsink);
-
-        char* full_name = nullptr;
-        rc = krb5_cc_get_full_name(ctx, cc, &full_name);
-        if (!rc && full_name) {
-            info->setKeyValue("full_name", new QoreStringNode(full_name), xsink);
-            krb5_free_string(ctx, full_name);
-        } else {
-            info->setKeyValue("full_name", new QoreStringNode(""), xsink);
+        bool accessible = krb5_check_cache_access(ctx, cc, QSEC_READ, xsink,
+            "listing credential cache collection entry");
+        if (!accessible) {
+            xsink->clear();
         }
 
-        krb5_principal princ = nullptr;
-        rc = krb5_cc_get_principal(ctx, cc, &princ);
-        if (!rc && princ) {
-            info->setKeyValue("has_principal", true, xsink);
-            QoreStringNode* princ_str = krb5_unparse_principal(ctx, princ, xsink, "KRB5-CACHE-ERROR",
-                "rendering credential cache principal");
-            krb5_free_principal(ctx, princ);
-            if (*xsink) {
-                xsink->clear();
-                info->setKeyValue("has_principal", false, xsink);
-                info->setKeyValue("principal", QoreValue(), xsink);
-            } else {
-                info->setKeyValue("principal", princ_str, xsink);
-            }
-        } else {
+        info->setKeyValue("type", new QoreStringNode(type ? type : ""), xsink);
+        info->setKeyValue("accessible", accessible, xsink);
+
+        if (!accessible) {
+            info->setKeyValue("name", new QoreStringNode(""), xsink);
+            info->setKeyValue("full_name", new QoreStringNode(""), xsink);
             info->setKeyValue("has_principal", false, xsink);
             info->setKeyValue("principal", QoreValue(), xsink);
+        } else {
+            info->setKeyValue("name", new QoreStringNode(name ? name : ""), xsink);
+
+            char* full_name = nullptr;
+            rc = krb5_cc_get_full_name(ctx, cc, &full_name);
+            if (!rc && full_name) {
+                info->setKeyValue("full_name", new QoreStringNode(full_name), xsink);
+                krb5_free_string(ctx, full_name);
+            } else {
+                info->setKeyValue("full_name", new QoreStringNode(""), xsink);
+            }
+
+            krb5_principal princ = nullptr;
+            rc = krb5_cc_get_principal(ctx, cc, &princ);
+            if (!rc && princ) {
+                info->setKeyValue("has_principal", true, xsink);
+                QoreStringNode* princ_str = krb5_unparse_principal(ctx, princ, xsink, "KRB5-CACHE-ERROR",
+                    "rendering credential cache principal");
+                krb5_free_principal(ctx, princ);
+                if (*xsink) {
+                    xsink->clear();
+                    info->setKeyValue("has_principal", false, xsink);
+                    info->setKeyValue("principal", QoreValue(), xsink);
+                } else {
+                    info->setKeyValue("principal", princ_str, xsink);
+                }
+            } else {
+                info->setKeyValue("has_principal", false, xsink);
+                info->setKeyValue("principal", QoreValue(), xsink);
+            }
         }
 
         krb5_cc_close(ctx, cc);
